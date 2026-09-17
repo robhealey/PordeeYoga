@@ -175,25 +175,44 @@ function DaySchedule({ sessions }: { sessions: ClassSession[] }) {
       </div>
 
       <div className="space-y-3">
-        {current.items.map((s) => (
-          <Link
-            key={s.id}
-            to={`/class/${s.id}`}
-            className="flex gap-4 border border-sage-200 rounded-lg p-4 bg-white hover:shadow-md transition-shadow"
-          >
-            <div className="w-16 shrink-0 text-sage-700 font-medium">{formatTime(s.start_time)}</div>
-            <div className="flex-1">
-              <div className="flex justify-between items-start">
-                <h3 className="font-medium">{s.class_name}</h3>
-                <span className="text-sage-500 text-xs">{statusLabel[s.status] ?? s.status}</span>
+        {current.items.map((s) => {
+          const started = new Date(s.start_time).getTime() <= Date.now();
+          const content = (
+            <>
+              <div className={`w-16 shrink-0 font-medium ${started ? "text-sage-400" : "text-sage-700"}`}>
+                {formatTime(s.start_time)}
               </div>
-              {s.instructor_name && <p className="text-sm text-sage-500">with {s.instructor_name}</p>}
-              <p className="text-xs mt-2 text-sage-400">
-                {s.spots_left > 0 ? `${s.spots_left} spots left` : "Full — join the waitlist"}
-              </p>
-            </div>
-          </Link>
-        ))}
+              <div className="flex-1">
+                <div className="flex justify-between items-start">
+                  <h3 className={`font-medium ${started ? "text-sage-500" : ""}`}>{s.class_name}</h3>
+                  <span className="text-sage-500 text-xs">{started ? "Started" : statusLabel[s.status] ?? s.status}</span>
+                </div>
+                {s.instructor_name && <p className="text-sm text-sage-500">with {s.instructor_name}</p>}
+                {!started && (
+                  <p className="text-xs mt-2 text-sage-400">
+                    {s.spots_left > 0 ? `${s.spots_left} spots left` : "Full — join the waitlist"}
+                  </p>
+                )}
+              </div>
+            </>
+          );
+          if (started) {
+            return (
+              <div key={s.id} className="flex gap-4 border border-sage-100 bg-sage-50 opacity-60 rounded-lg p-4 cursor-not-allowed">
+                {content}
+              </div>
+            );
+          }
+          return (
+            <Link
+              key={s.id}
+              to={`/class/${s.id}`}
+              className="flex gap-4 border border-sage-200 bg-white hover:shadow-md rounded-lg p-4 transition-shadow"
+            >
+              {content}
+            </Link>
+          );
+        })}
       </div>
     </div>
   );
