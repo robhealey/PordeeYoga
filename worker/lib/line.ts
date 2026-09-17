@@ -113,3 +113,15 @@ export async function pushLineMessage(env: Env, to: string, text: string): Promi
     console.error(`LINE push message failed: ${res.status} ${await res.text()}`);
   }
 }
+
+/** Pushes a message to every studio owner (see OWNER_LINE_USER_IDS) — used to flag things
+ * that need a human, like a manual PromptPay payment awaiting confirmation. */
+export async function pushToOwners(env: Env, text: string): Promise<void> {
+  const ownerIds = (env.OWNER_LINE_USER_IDS ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+  for (const lineUserId of ownerIds) {
+    await pushLineMessage(env, lineUserId, text);
+  }
+}

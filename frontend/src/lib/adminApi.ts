@@ -122,6 +122,16 @@ export interface MemberPackageRow {
   expiry_extension_flagged_at: string | null;
 }
 
+export interface PendingPaymentRow {
+  kind: "package" | "renewal";
+  id: number;
+  user_name: string;
+  description: string;
+  amount_cents: number;
+  currency: string;
+  created_at: string;
+}
+
 export interface HolidayRow {
   id: number;
   date: string;
@@ -220,6 +230,11 @@ export const adminApi = {
     }),
   adminExtendRenewal: (id: number) =>
     request<{ renewalId: number; newExpiresAt: string }>(`/member-packages/${id}/renewals/extend`, { method: "POST" }),
+
+  pendingPayments: () => request<{ pending: PendingPaymentRow[] }>("/pending-payments"),
+  markPackagePaid: (id: number) =>
+    request<{ memberPackage: MemberPackageRow }>(`/member-packages/${id}/mark-paid`, { method: "POST" }),
+  markRenewalPaid: (id: number) => request<{ ok: true }>(`/renewals/${id}/mark-paid`, { method: "POST" }),
 
   listHolidays: () => request<{ holidays: HolidayRow[] }>("/holidays"),
   createHoliday: (body: { date: string; name: string; type?: "public" | "special" }) =>

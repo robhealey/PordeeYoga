@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, type MemberPackage, type PackageRenewal } from "../lib/api";
-import { createOmiseCardToken } from "../lib/omise";
 
 function formatMoney(cents: number, currency: string) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
@@ -19,11 +18,9 @@ export function Checkout() {
   const { kind, id } = useParams<{ kind: "package" | "renewal"; id: string }>();
   const targetId = Number(id);
   const [payable, setPayable] = useState<Payable | null>(null);
-  const [method, setMethod] = useState<"promptpay" | "card">("promptpay");
-  const [qrImageUri, setQrImageUri] = useState<string | null>(null);
-  const [paying, setPaying] = useState(false);
+  const [notified, setNotified] = useState(false);
+  const [notifying, setNotifying] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [card, setCard] = useState({ name: "", number: "", expirationMonth: "", expirationYear: "", securityCode: "" });
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   async function loadPackage(): Promise<Payable> {
@@ -59,54 +56,30 @@ export function Checkout() {
 
   useEffect(() => {
     load().catch((e) => setError(String(e)));
+    // Poll for the admin having confirmed the payment manually (no live bank integration yet).
+    pollRef.current = setInterval(async () => {
+      const p = await load().catch(() => null);
+      if (p && (p.isPaid || p.isTerminal) && pollRef.current) {
+        clearInterval(pollRef.current);
+      }
+    }, 4000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, targetId]);
 
-  function startPolling() {
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(async () => {
-      const p = await load();
-      if (p.isPaid || p.isTerminal) {
-        if (pollRef.current) clearInterval(pollRef.current);
-      }
-    }, 3000);
-  }
-
-  function chargeBody(method: "card" | "promptpay", cardToken?: string) {
-    return kind === "renewal"
-      ? { packageRenewalId: targetId, method, cardToken }
-      : { memberPackageId: targetId, method, cardToken };
-  }
-
-  async function payPromptPay() {
-    setPaying(true);
+  async function notifyPaid() {
+    setNotifying(true);
     setError(null);
     try {
-      const result = await api.chargeOmise(chargeBody("promptpay"));
-      setQrImageUri(result.qrImageUri);
-      startPolling();
+      if (kind === "renewal") await api.notifyRenewalPaid(targetId);
+      else await api.notifyPackagePaid(targetId);
+      setNotified(true);
     } catch (e) {
       setError(String(e));
     } finally {
-      setPaying(false);
-    }
-  }
-
-  async function payCard(e: React.FormEvent) {
-    e.preventDefault();
-    setPaying(true);
-    setError(null);
-    try {
-      const cardToken = await createOmiseCardToken(card);
-      await api.chargeOmise(chargeBody("card", cardToken));
-      await load();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setPaying(false);
+      setNotifying(false);
     }
   }
 
@@ -135,88 +108,30 @@ export function Checkout() {
       <p className="mt-1 text-sage-600">{payable.description}</p>
       <p className="mt-1 font-medium">{formatMoney(payable.amountCents, payable.currency)}</p>
 
-      <div className="mt-4 flex gap-2">
-        <button
-          onClick={() => setMethod("promptpay")}
-          className={`px-3 py-1.5 rounded-md text-sm ${method === "promptpay" ? "bg-sage-500 text-white" : "bg-sage-100"}`}
-        >
-          PromptPay
-        </button>
-        <button
-          onClick={() => setMethod("card")}
-          className={`px-3 py-1.5 rounded-md text-sm ${method === "card" ? "bg-sage-500 text-white" : "bg-sage-100"}`}
-        >
-          Card
-        </button>
+      <div className="mt-4 border border-sage-200 rounded-lg p-4 bg-white">
+        <img src="/promptpay-qr.png" alt="PromptPay QR code" className="w-64 h-64 mx-auto object-contain" />
+        <p className="mt-3 text-sm text-sage-600 text-center">
+          Scan with your banking app and transfer exactly{" "}
+          <span className="font-medium">{formatMoney(payable.amountCents, payable.currency)}</span>.
+        </p>
       </div>
 
-      {method === "promptpay" && (
-        <div className="mt-4">
-          {!qrImageUri ? (
-            <button
-              onClick={() => void payPromptPay()}
-              disabled={paying}
-              className="bg-sage-500 disabled:bg-sage-200 text-white px-4 py-2 rounded-md hover:bg-sage-600"
-            >
-              {paying ? "Generating QR…" : "Generate PromptPay QR"}
-            </button>
-          ) : (
-            <div>
-              <img src={qrImageUri} alt="PromptPay QR code" className="w-64 h-64 border border-sage-200 rounded-md" />
-              <p className="mt-2 text-sm text-sage-500">Scan with your banking app. This page updates automatically.</p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {method === "card" && (
-        <form onSubmit={(e) => void payCard(e)} className="mt-4 space-y-3">
-          <input
-            required
-            placeholder="Cardholder name"
-            value={card.name}
-            onChange={(e) => setCard({ ...card, name: e.target.value })}
-            className="w-full border border-sage-200 rounded-md px-3 py-2"
-          />
-          <input
-            required
-            placeholder="Card number"
-            value={card.number}
-            onChange={(e) => setCard({ ...card, number: e.target.value })}
-            className="w-full border border-sage-200 rounded-md px-3 py-2"
-          />
-          <div className="flex gap-2">
-            <input
-              required
-              placeholder="MM"
-              value={card.expirationMonth}
-              onChange={(e) => setCard({ ...card, expirationMonth: e.target.value })}
-              className="w-16 border border-sage-200 rounded-md px-3 py-2"
-            />
-            <input
-              required
-              placeholder="YYYY"
-              value={card.expirationYear}
-              onChange={(e) => setCard({ ...card, expirationYear: e.target.value })}
-              className="w-20 border border-sage-200 rounded-md px-3 py-2"
-            />
-            <input
-              required
-              placeholder="CVC"
-              value={card.securityCode}
-              onChange={(e) => setCard({ ...card, securityCode: e.target.value })}
-              className="w-20 border border-sage-200 rounded-md px-3 py-2"
-            />
-          </div>
+      <div className="mt-4">
+        {notified ? (
+          <p className="text-sm text-sage-600 bg-sage-50 border border-sage-200 rounded-md p-3">
+            Thanks — we've let the studio know. Your package will activate as soon as they confirm the payment.
+            This page will update automatically.
+          </p>
+        ) : (
           <button
-            type="submit"
-            disabled={paying}
-            className="bg-sage-500 disabled:bg-sage-200 text-white px-4 py-2 rounded-md hover:bg-sage-600"
+            onClick={() => void notifyPaid()}
+            disabled={notifying}
+            className="w-full bg-sage-500 disabled:bg-sage-200 text-white px-4 py-2 rounded-md hover:bg-sage-600"
           >
-            {paying ? "Charging…" : `Pay ${formatMoney(payable.amountCents, payable.currency)}`}
+            {notifying ? "Letting the studio know…" : "I've paid"}
           </button>
-        </form>
-      )}
+        )}
+      </div>
     </div>
   );
 }

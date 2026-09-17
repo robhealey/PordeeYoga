@@ -3,7 +3,7 @@
 Studio management website implementing Pordee Yoga's full booking/membership business rules: LINE
 sign-in, packages & credits, class booking with a member-selected package, waitlists, cancellations,
 studio cancellations, shared coupon pools, birthday coupons, package renewals, and an admin console —
-built on Cloudflare Workers + D1. Payment (Omise: cards + PromptPay QR) is per package purchase /
+built on Cloudflare Workers + D1. Payment (Omise PromptPay QR) is per package purchase /
 renewal fee, not per class.
 
 ## Stack
@@ -12,7 +12,7 @@ renewal fee, not per class.
 - **Database**: Cloudflare D1 (`worker/migrations/`)
 - **Frontend**: React + Vite + Tailwind (`frontend/`), served by the same Worker as static assets
 - **Auth**: LINE Login (LIFF inside the LINE app, OAuth redirect in a plain browser)
-- **Payments**: Omise (cards + PromptPay QR), pluggable for LINE Pay later
+- **Payments**: Omise PromptPay QR only, pluggable for LINE Pay later
 - **Messaging**: LINE Messaging API (booking confirmations + class reminders)
 
 ## Local development

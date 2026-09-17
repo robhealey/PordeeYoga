@@ -102,17 +102,24 @@ export async function upsertLineUser(
     .bind(profile.lineUserId)
     .first<UserRow>();
 
+  // The designated owner(s)' LINE accounts always re-sync to admin on login, regardless of
+  // what the `role` column currently holds — a hardcoded guarantee independent of any
+  // in-app role edit (accidental or otherwise).
+  const ownerIds = (env.OWNER_LINE_USER_IDS ?? "").split(",").map((id) => id.trim()).filter(Boolean);
+  const isOwner = ownerIds.includes(profile.lineUserId);
+
   if (existing) {
-    await env.DB.prepare("UPDATE users SET display_name = ?, picture_url = ? WHERE id = ?")
-      .bind(profile.displayName, profile.pictureUrl, existing.id)
+    const role = isOwner ? "admin" : existing.role;
+    await env.DB.prepare("UPDATE users SET display_name = ?, picture_url = ?, role = ? WHERE id = ?")
+      .bind(profile.displayName, profile.pictureUrl, role, existing.id)
       .run();
-    return { ...existing, display_name: profile.displayName, picture_url: profile.pictureUrl };
+    return { ...existing, display_name: profile.displayName, picture_url: profile.pictureUrl, role };
   }
 
   const inserted = await env.DB.prepare(
-    "INSERT INTO users (line_user_id, display_name, picture_url, role) VALUES (?, ?, ?, 'customer') RETURNING id, line_user_id, display_name, picture_url, phone, date_of_birth, role"
+    "INSERT INTO users (line_user_id, display_name, picture_url, role) VALUES (?, ?, ?, ?) RETURNING id, line_user_id, display_name, picture_url, phone, date_of_birth, role"
   )
-    .bind(profile.lineUserId, profile.displayName, profile.pictureUrl)
+    .bind(profile.lineUserId, profile.displayName, profile.pictureUrl, isOwner ? "admin" : "customer")
     .first<UserRow>();
   if (!inserted) throw new Error("Failed to create user");
   return inserted;

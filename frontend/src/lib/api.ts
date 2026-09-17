@@ -94,12 +94,15 @@ export const api = {
     }),
   myBirthdayCoupons: () => request<{ coupons: BirthdayCoupon[] }>("/packages/coupons/birthday"),
   getRenewal: (id: number) => request<{ renewal: PackageRenewal }>(`/packages/renewals/${id}`),
+  notifyPackagePaid: (id: number) => request<{ ok: true }>(`/packages/${id}/notify-paid`, { method: "POST" }),
+  notifyRenewalPaid: (id: number) =>
+    request<{ ok: true }>(`/packages/renewals/${id}/notify-paid`, { method: "POST" }),
 
-  chargeOmise: (body: { memberPackageId?: number; packageRenewalId?: number; method: "card" | "promptpay"; cardToken?: string }) =>
-    request<{ chargeId: string; status: string; qrImageUri: string | null; authorizeUri: string | null }>(
-      "/payments/omise/charge",
-      { method: "POST", body: JSON.stringify(body) }
-    ),
+  chargeOmise: (body: { memberPackageId?: number; packageRenewalId?: number }) =>
+    request<{ chargeId: string; status: string; qrImageUri: string | null }>("/payments/omise/charge", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 };
 
 export type ClassSessionStatus = "scheduled" | "confirmed" | "full" | "cancelled_by_studio" | "completed";

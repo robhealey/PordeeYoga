@@ -31,6 +31,7 @@ import {
   removeSharedCouponMember,
 } from "../lib/coupons.ts";
 import { listWaitlistForSession } from "../lib/waitlist.ts";
+import { pushLineMessage } from "../lib/line.ts";
 
 const admin = new Hono<AppEnv>();
 
@@ -530,6 +531,87 @@ admin.post("/member-packages/:id/renewals/extend", async (c) => {
     .run();
   await applyExtendRenewal(c.env, result.data!.renewalId);
   return c.json(result.data);
+});
+
+/** Unified queue of manual-PromptPay payments awaiting a human to confirm (no bank API yet). */
+admin.get("/pending-payments", async (c) => {
+  const { results: packageRows } = await c.env.DB.prepare(
+    `SELECT mp.id, u.display_name AS user_name, p.name AS description, mp.price_paid_cents AS amount_cents,
+            mp.currency, mp.purchased_at AS created_at
+     FROM member_packages mp JOIN users u ON u.id = mp.user_id JOIN packages p ON p.id = mp.package_id
+     WHERE mp.status = 'pending_payment' ORDER BY mp.purchased_at ASC`
+  ).all<{ id: number; user_name: string; description: string; amount_cents: number; currency: string; created_at: string }>();
+
+  const { results: renewalRows } = await c.env.DB.prepare(
+    `SELECT pr.id, u.display_name AS user_name, 'Package extension' AS description, pr.fee_cents AS amount_cents,
+            'THB' AS currency, pr.created_at
+     FROM package_renewals pr
+     JOIN member_packages mp ON mp.id = pr.old_member_package_id
+     JOIN users u ON u.id = mp.user_id
+     WHERE pr.status = 'pending' AND pr.option = 'extend' ORDER BY pr.created_at ASC`
+  ).all<{ id: number; user_name: string; description: string; amount_cents: number; currency: string; created_at: string }>();
+
+  return c.json({
+    pending: [
+      ...packageRows.map((r) => ({ kind: "package" as const, ...r })),
+      ...renewalRows.map((r) => ({ kind: "renewal" as const, ...r })),
+    ].sort((a, b) => a.created_at.localeCompare(b.created_at)),
+  });
+});
+
+/** Confirms a member-initiated PromptPay payment manually (no live bank integration yet):
+ * admin checks their banking app, then activates the package here. */
+admin.post("/member-packages/:id/mark-paid", async (c) => {
+  const id = Number(c.req.param("id"));
+  const mp = await getMemberPackage(c.env, id);
+  if (!mp) return c.json({ error: "Not found" }, 404);
+  if (mp.status !== "pending_payment") return c.json({ error: `Already ${mp.status}` }, 409);
+
+  await c.env.DB.prepare(
+    "INSERT INTO payments (member_package_id, provider, amount_cents, currency, status, updated_at) VALUES (?, 'promptpay_manual', ?, ?, 'succeeded', datetime('now'))"
+  )
+    .bind(id, mp.price_paid_cents, mp.currency)
+    .run();
+  await activateMemberPackage(c.env, id);
+
+  const user = await c.env.DB.prepare("SELECT line_user_id FROM users WHERE id = ?")
+    .bind(mp.user_id)
+    .first<{ line_user_id: string | null }>();
+  if (user?.line_user_id) {
+    await pushLineMessage(c.env, user.line_user_id, "✅ Payment confirmed — your package is now active!");
+  }
+
+  const fresh = await getMemberPackage(c.env, id);
+  return c.json({ memberPackage: fresh });
+});
+
+/** Confirms a member-initiated renewal-extension PromptPay fee manually. */
+admin.post("/renewals/:id/mark-paid", async (c) => {
+  const id = Number(c.req.param("id"));
+  const renewal = await c.env.DB.prepare(
+    `SELECT pr.status, pr.fee_cents, mp.user_id FROM package_renewals pr
+     JOIN member_packages mp ON mp.id = pr.old_member_package_id WHERE pr.id = ?`
+  )
+    .bind(id)
+    .first<{ status: string; fee_cents: number | null; user_id: number }>();
+  if (!renewal) return c.json({ error: "Not found" }, 404);
+  if (renewal.status !== "pending") return c.json({ error: `Already ${renewal.status}` }, 409);
+
+  await c.env.DB.prepare(
+    "INSERT INTO payments (package_renewal_id, provider, amount_cents, currency, status, updated_at) VALUES (?, 'promptpay_manual', ?, 'THB', 'succeeded', datetime('now'))"
+  )
+    .bind(id, renewal.fee_cents ?? 0)
+    .run();
+  await applyExtendRenewal(c.env, id);
+
+  const user = await c.env.DB.prepare("SELECT line_user_id FROM users WHERE id = ?")
+    .bind(renewal.user_id)
+    .first<{ line_user_id: string | null }>();
+  if (user?.line_user_id) {
+    await pushLineMessage(c.env, user.line_user_id, "✅ Payment confirmed — your package extension is now active!");
+  }
+
+  return c.json({ ok: true });
 });
 
 admin.post("/member-packages/:id/activate", async (c) => {

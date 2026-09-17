@@ -11,6 +11,7 @@ import {
 } from "../lib/packages.ts";
 import { activateAndMaybeCombine, assertCombinePurchaseAllowed, createExtendRenewalRequest } from "../lib/renewals.ts";
 import { listBirthdayCouponsForUser } from "../lib/coupons.ts";
+import { pushToOwners } from "../lib/line.ts";
 
 const packages = new Hono<AppEnv>();
 
@@ -123,6 +124,52 @@ packages.post("/:id/renewals/extend", requireUser, async (c) => {
   const result = await createExtendRenewalRequest(c.env, { memberPackageId: id, processedBy: "member" });
   if (!result.ok) return c.json({ error: result.error }, (result.status ?? 400) as 400 | 404);
   return c.json(result.data, 201);
+});
+
+/** No live bank integration yet — this just pings the studio's LINE so a human can check
+ * their PromptPay app and confirm the payment manually (see admin mark-paid endpoints). */
+packages.post("/:id/notify-paid", requireUser, async (c) => {
+  const user = c.get("user")!;
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "Invalid package id" }, 400);
+
+  const mp = await c.env.DB.prepare(
+    `SELECT mp.user_id, mp.status, mp.price_paid_cents, mp.currency, p.name AS package_name
+     FROM member_packages mp JOIN packages p ON p.id = mp.package_id WHERE mp.id = ?`
+  )
+    .bind(id)
+    .first<{ user_id: number; status: string; price_paid_cents: number; currency: string; package_name: string }>();
+  if (!mp) return c.json({ error: "Not found" }, 404);
+  if (mp.user_id !== user.id) return c.json({ error: "Not your package" }, 403);
+  if (mp.status !== "pending_payment") return c.json({ error: `Already ${mp.status}` }, 409);
+
+  await pushToOwners(
+    c.env,
+    `💰 ${user.display_name} says they've paid ${(mp.price_paid_cents / 100).toFixed(0)} ${mp.currency} for ${mp.package_name} via PromptPay. Check Admin > Packages to confirm and activate.`
+  );
+  return c.json({ ok: true });
+});
+
+packages.post("/renewals/:id/notify-paid", requireUser, async (c) => {
+  const user = c.get("user")!;
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "Invalid renewal id" }, 400);
+
+  const renewal = await c.env.DB.prepare(
+    `SELECT pr.status, pr.fee_cents, mp.user_id FROM package_renewals pr
+     JOIN member_packages mp ON mp.id = pr.old_member_package_id WHERE pr.id = ?`
+  )
+    .bind(id)
+    .first<{ status: string; fee_cents: number | null; user_id: number }>();
+  if (!renewal) return c.json({ error: "Not found" }, 404);
+  if (renewal.user_id !== user.id) return c.json({ error: "Not your renewal" }, 403);
+  if (renewal.status !== "pending") return c.json({ error: `Already ${renewal.status}` }, 409);
+
+  await pushToOwners(
+    c.env,
+    `💰 ${user.display_name} says they've paid ${((renewal.fee_cents ?? 0) / 100).toFixed(0)} THB for a package extension via PromptPay. Check Admin > Packages to confirm.`
+  );
+  return c.json({ ok: true });
 });
 
 export default packages;

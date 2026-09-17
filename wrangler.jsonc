@@ -17,7 +17,7 @@
     {
       "binding": "DB",
       "database_name": "pordee-yoga-db",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "database_id": "295ebf5b-fa4a-46f7-9e69-0fa2a5b6566e",
       "migrations_dir": "./worker/migrations"
     }
   ],
@@ -25,23 +25,14 @@
     "crons": ["*/15 * * * *"]
   },
   "vars": {
-    "ENVIRONMENT": "development",
-    "DEV_MOCK_AUTH": "true",
+    // Production-safe defaults for the one deployed Worker. Local `wrangler dev` overrides
+    // ENVIRONMENT/DEV_MOCK_AUTH via `.dev.vars` (see .dev.vars.example) — never edit these two
+    // to "true"/"development" here, or a live deploy would ship with mock-login enabled.
+    "ENVIRONMENT": "production",
+    "DEV_MOCK_AUTH": "false",
     "STUDIO_NAME": "Pordee Yoga",
     "TIMEZONE": "Asia/Bangkok",
     "BOOKING_EXPIRY_MINUTES": "15",
     "REMINDER_HOURS_BEFORE": "2"
-  },
-  "env": {
-    "production": {
-      "vars": {
-        "ENVIRONMENT": "production",
-        "DEV_MOCK_AUTH": "false",
-        "STUDIO_NAME": "Pordee Yoga",
-        "TIMEZONE": "Asia/Bangkok",
-        "BOOKING_EXPIRY_MINUTES": "15",
-        "REMINDER_HOURS_BEFORE": "2"
-      }
-    }
   }
 }

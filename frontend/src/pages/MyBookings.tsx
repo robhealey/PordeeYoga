@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type MyBooking, type MyWaitlistEntry } from "../lib/api";
+import { useAuth } from "../lib/AuthContext";
+import { LoginPrompt } from "../components/LoginPrompt";
 
 function formatWhen(iso: string) {
   return new Date(iso).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
@@ -24,11 +26,13 @@ const statusColor: Record<string, string> = {
 };
 
 export function MyBookings() {
+  const { user } = useAuth();
   const [bookings, setBookings] = useState<MyBooking[] | null>(null);
   const [waitlist, setWaitlist] = useState<MyWaitlistEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   function load() {
+    if (!user) return;
     api
       .myBookings()
       .then((r) => setBookings(r.bookings))
@@ -36,7 +40,7 @@ export function MyBookings() {
     api.myWaitlist().then((r) => setWaitlist(r.entries));
   }
 
-  useEffect(load, []);
+  useEffect(load, [user]);
 
   async function cancel(id: number) {
     await api.cancelBooking(id);
@@ -54,6 +58,14 @@ export function MyBookings() {
     load();
   }
 
+  if (!user) {
+    return (
+      <div>
+        <h1 className="text-2xl font-semibold mb-4">My Bookings</h1>
+        <LoginPrompt label="your bookings" />
+      </div>
+    );
+  }
   if (error) return <p className="text-red-600">{error}</p>;
   if (!bookings) return <p className="text-sage-500">Loading…</p>;
 

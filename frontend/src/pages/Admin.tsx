@@ -10,6 +10,7 @@ import {
   type MemberPackageRow,
   type MemberRow,
   type PackageCatalogRow,
+  type PendingPaymentRow,
   type SessionBookingRow,
   type SessionRow,
   type WaitlistRow,
@@ -21,6 +22,7 @@ type Tab =
   | "instructors"
   | "members"
   | "packages"
+  | "pending-payments"
   | "flags"
   | "holidays"
   | "settings"
@@ -33,6 +35,7 @@ const TABS: Tab[] = [
   "instructors",
   "members",
   "packages",
+  "pending-payments",
   "flags",
   "holidays",
   "settings",
@@ -62,6 +65,7 @@ export function Admin() {
       {tab === "instructors" && <InstructorsTab />}
       {tab === "members" && <MembersTab />}
       {tab === "packages" && <PackageCatalogTab />}
+      {tab === "pending-payments" && <PendingPaymentsTab />}
       {tab === "flags" && <ExpiryFlagsTab />}
       {tab === "holidays" && <HolidaysTab />}
       {tab === "settings" && <SettingsTab />}
@@ -618,6 +622,64 @@ function PackageCatalogTab() {
         ))}
       </tbody>
     </table>
+  );
+}
+
+// -- Pending manual PromptPay payments (no live bank integration yet) --------------
+
+function PendingPaymentsTab() {
+  const [items, setItems] = useState<PendingPaymentRow[]>([]);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  function load() {
+    adminApi.pendingPayments().then((r) => setItems(r.pending));
+  }
+  useEffect(load, []);
+
+  async function confirm(row: PendingPaymentRow) {
+    const key = `${row.kind}-${row.id}`;
+    setBusyId(key);
+    try {
+      if (row.kind === "package") await adminApi.markPackagePaid(row.id);
+      else await adminApi.markRenewalPaid(row.id);
+      load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div>
+      <p className="text-sm text-sage-500 mb-3">
+        Members tap "I've paid" after scanning the PromptPay QR — check your banking app for the transfer, then
+        confirm here to activate their package. No live bank integration yet, so this step is manual.
+      </p>
+      {items.length === 0 && <p className="text-sage-400">Nothing waiting on confirmation.</p>}
+      <ul className="space-y-2">
+        {items.map((row) => {
+          const key = `${row.kind}-${row.id}`;
+          return (
+            <li key={key} className="bg-white border border-sage-200 rounded-lg p-3 flex justify-between items-center">
+              <div>
+                <p className="font-medium">
+                  {row.user_name} — {row.description}
+                </p>
+                <p className="text-sm text-sage-500">
+                  {(row.amount_cents / 100).toFixed(0)} {row.currency} · {new Date(row.created_at).toLocaleString()}
+                </p>
+              </div>
+              <button
+                onClick={() => void confirm(row)}
+                disabled={busyId === key}
+                className="text-sm bg-sage-500 text-white px-3 py-1.5 rounded-md disabled:bg-sage-200"
+              >
+                {busyId === key ? "Confirming…" : "Mark as Paid"}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 

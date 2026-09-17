@@ -31,27 +31,10 @@ interface OmiseCharge {
   amount: number;
   currency: string;
   source?: { scannable_code?: { image?: { download_uri?: string } } };
-  authorize_uri?: string;
 }
 
 interface OmiseSource {
   id: string;
-}
-
-/** Charge a tokenized card (from the Omise.js card form on the checkout page). */
-export async function createCardCharge(
-  env: Env,
-  params: { amountSatang: number; currency: string; cardToken: string; description: string }
-): Promise<OmiseCharge> {
-  return omiseFetch<OmiseCharge>(env, "/charges", {
-    method: "POST",
-    body: new URLSearchParams({
-      amount: String(params.amountSatang),
-      currency: params.currency,
-      card: params.cardToken,
-      description: params.description,
-    }),
-  });
 }
 
 /** Create a PromptPay source, then charge against it — returns a QR code image URI for the customer to scan. */

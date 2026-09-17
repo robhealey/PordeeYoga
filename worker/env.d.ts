@@ -16,7 +16,10 @@ export interface Env {
   LIFF_ID?: string;
   LINE_MESSAGING_CHANNEL_ACCESS_TOKEN?: string;
   LINE_MESSAGING_CHANNEL_SECRET?: string;
-  OMISE_PUBLIC_KEY?: string;
   OMISE_SECRET_KEY?: string;
   OMISE_WEBHOOK_SECRET?: string;
+  // Comma-separated real LINE user ids (the opaque `sub` from LINE's ID token, e.g. "U10a04...")
+  // of the studio owner(s). Those accounts are force-synced to role='admin' on every login —
+  // see upsertLineUser.
+  OWNER_LINE_USER_IDS?: string;
 }

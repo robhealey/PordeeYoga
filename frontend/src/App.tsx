@@ -9,6 +9,7 @@ import { Checkout } from "./pages/Checkout";
 import { LoginCallback } from "./pages/LoginCallback";
 import { Admin } from "./pages/Admin";
 import { RequireAdmin } from "./components/RequireAdmin";
+import { Privacy } from "./pages/Privacy";
 
 export function App() {
   return (
@@ -22,6 +23,7 @@ export function App() {
             <Route path="/packages" element={<Packages />} />
             <Route path="/checkout/:kind/:id" element={<Checkout />} />
             <Route path="/login/callback" element={<LoginCallback />} />
+            <Route path="/privacy" element={<Privacy />} />
             <Route
               path="/admin"
               element={

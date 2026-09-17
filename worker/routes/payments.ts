@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../types.ts";
 import { attachUser, requireUser } from "../middleware/auth.ts";
-import { createCardCharge, createPromptPayCharge, mapOmiseStatus } from "../lib/omise.ts";
+import { createPromptPayCharge, mapOmiseStatus } from "../lib/omise.ts";
 import { applyPaymentEffect } from "../lib/payments.ts";
 
 const payments = new Hono<AppEnv>();
@@ -55,37 +55,17 @@ async function loadPayable(
 
 payments.post("/omise/charge", requireUser, async (c) => {
   const user = c.get("user")!;
-  const body = await c.req.json<{
-    memberPackageId?: number;
-    packageRenewalId?: number;
-    method: "card" | "promptpay";
-    cardToken?: string;
-  }>();
-
-  if (body.method !== "card" && body.method !== "promptpay") {
-    return c.json({ error: "A valid method is required" }, 400);
-  }
-  if (body.method === "card" && !body.cardToken) {
-    return c.json({ error: "cardToken is required for card payments" }, 400);
-  }
+  const body = await c.req.json<{ memberPackageId?: number; packageRenewalId?: number }>();
 
   const loaded = await loadPayable(c, user.id, body);
   if ("error" in loaded) return c.json({ error: loaded.error }, loaded.status as 400 | 403 | 404 | 409);
   const { payable, memberPackageId, packageRenewalId } = loaded;
 
-  const charge =
-    body.method === "card"
-      ? await createCardCharge(c.env, {
-          amountSatang: payable.amountCents,
-          currency: payable.currency,
-          cardToken: body.cardToken!,
-          description: payable.description,
-        })
-      : await createPromptPayCharge(c.env, {
-          amountSatang: payable.amountCents,
-          currency: payable.currency,
-          description: payable.description,
-        });
+  const charge = await createPromptPayCharge(c.env, {
+    amountSatang: payable.amountCents,
+    currency: payable.currency,
+    description: payable.description,
+  });
 
   const status = mapOmiseStatus(charge.status);
 
@@ -104,7 +84,6 @@ payments.post("/omise/charge", requireUser, async (c) => {
     chargeId: charge.id,
     status,
     qrImageUri: charge.source?.scannable_code?.image?.download_uri ?? null,
-    authorizeUri: charge.authorize_uri ?? null,
   });
 });
 
