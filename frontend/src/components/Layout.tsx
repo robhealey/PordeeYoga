@@ -21,7 +21,7 @@ export function Layout() {
             <img src="/PordeeLogo2022onWhite.jpg" alt="Pordee Yoga" className="h-9 w-9 rounded-full object-cover" />
           </Link>
           <div className="flex items-center gap-3 text-sm">
-            {!inLiff && user?.role === "admin" && (
+            {user?.role === "admin" && (
               <Link to="/admin" className="text-sage-600 hover:underline">
                 Admin
               </Link>

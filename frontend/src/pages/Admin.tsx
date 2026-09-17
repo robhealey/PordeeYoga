@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState } from "react";
+import { PromptModal } from "../components/PromptModal";
 import {
   adminApi,
   type AdminBookingRow,
@@ -151,37 +152,39 @@ function ClassTypesTab() {
         <button className="bg-sage-500 text-white px-3 py-1 rounded-md">Add class type</button>
       </form>
       {error && <p className="text-red-600 mb-2">{error}</p>}
-      <table className="w-full text-sm bg-white rounded-lg overflow-hidden border border-sage-200">
-        <thead className="bg-sage-100 text-left">
-          <tr>
-            <th className="p-2">Name</th>
-            <th className="p-2">Minutes</th>
-            <th className="p-2">Capacity</th>
-            <th className="p-2">Min to confirm</th>
-            <th className="p-2">Active</th>
-            <th className="p-2" />
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((i) => (
-            <tr key={i.id} className="border-t border-sage-100">
-              <td className="p-2">{i.name}</td>
-              <td className="p-2">{i.duration_minutes}</td>
-              <td className="p-2">{i.capacity}</td>
-              <td className="p-2">
-                {i.min_confirm_count}
-                {i.min_confirm_value_cents != null && ` or ${(i.min_confirm_value_cents / 100).toFixed(0)} THB value`}
-              </td>
-              <td className="p-2">{i.active ? "Yes" : "No"}</td>
-              <td className="p-2">
-                <button onClick={() => void toggleActive(i)} className="text-sage-600 hover:underline">
-                  {i.active ? "Deactivate" : "Activate"}
-                </button>
-              </td>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm bg-white rounded-lg overflow-hidden border border-sage-200">
+          <thead className="bg-sage-100 text-left">
+            <tr>
+              <th className="p-2">Name</th>
+              <th className="p-2">Minutes</th>
+              <th className="p-2">Capacity</th>
+              <th className="p-2">Min to confirm</th>
+              <th className="p-2">Active</th>
+              <th className="p-2" />
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {items.map((i) => (
+              <tr key={i.id} className="border-t border-sage-100">
+                <td className="p-2">{i.name}</td>
+                <td className="p-2">{i.duration_minutes}</td>
+                <td className="p-2">{i.capacity}</td>
+                <td className="p-2">
+                  {i.min_confirm_count}
+                  {i.min_confirm_value_cents != null && ` or ${(i.min_confirm_value_cents / 100).toFixed(0)} THB value`}
+                </td>
+                <td className="p-2">{i.active ? "Yes" : "No"}</td>
+                <td className="p-2">
+                  <button onClick={() => void toggleActive(i)} className="text-sage-600 hover:underline">
+                    {i.active ? "Deactivate" : "Activate"}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -237,6 +240,7 @@ function SessionsTab() {
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [roster, setRoster] = useState<SessionBookingRow[]>([]);
+  const [cancelTargetId, setCancelTargetId] = useState<number | null>(null);
   const [waitlist, setWaitlist] = useState<WaitlistRow[]>([]);
 
   function load() {
@@ -263,8 +267,7 @@ function SessionsTab() {
     }
   }
 
-  async function cancel(id: number) {
-    const reason = window.prompt("Cancellation reason (optional):") ?? undefined;
+  async function cancel(id: number, reason?: string) {
     await adminApi.cancelSession(id, reason);
     load();
   }
@@ -346,79 +349,94 @@ function SessionsTab() {
         <button className="bg-sage-500 text-white px-3 py-1 rounded-md">Schedule class</button>
       </form>
       {error && <p className="text-red-600 mb-2">{error}</p>}
-      <table className="w-full text-sm bg-white rounded-lg overflow-hidden border border-sage-200">
-        <thead className="bg-sage-100 text-left">
-          <tr>
-            <th className="p-2">Class</th>
-            <th className="p-2">Instructor</th>
-            <th className="p-2">Start</th>
-            <th className="p-2">Booked</th>
-            <th className="p-2">Status</th>
-            <th className="p-2" />
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((s) => (
-            <Fragment key={s.id}>
-              <tr className="border-t border-sage-100 cursor-pointer" onClick={() => void toggleExpand(s.id)}>
-                <td className="p-2">{s.class_name}</td>
-                <td className="p-2">{s.instructor_name ?? "—"}</td>
-                <td className="p-2">{new Date(s.start_time).toLocaleString()}</td>
-                <td className="p-2">{s.booked_count}</td>
-                <td className="p-2">{s.status}{s.opened_manually ? " (manual)" : ""}</td>
-                <td className="p-2 space-x-2" onClick={(e) => e.stopPropagation()}>
-                  {s.status !== "cancelled_by_studio" && !s.opened_manually && (
-                    <button onClick={() => void openManually(s.id)} className="text-sage-600 hover:underline">
-                      Open manually
-                    </button>
-                  )}
-                  {s.status !== "cancelled_by_studio" && (
-                    <button onClick={() => void cancel(s.id)} className="text-red-500 hover:underline">
-                      Cancel
-                    </button>
-                  )}
-                </td>
-              </tr>
-              {expanded === s.id && (
-                <tr key={`${s.id}-detail`} className="border-t border-sage-100 bg-sage-50">
-                  <td colSpan={6} className="p-3">
-                    <p className="font-medium mb-1">Roster</p>
-                    {roster.length === 0 && <p className="text-sage-400">No bookings.</p>}
-                    <ul className="space-y-1 mb-3">
-                      {roster.map((b) => (
-                        <li key={b.id} className="flex justify-between items-center">
-                          <span>
-                            {b.user_name} {b.phone && `· ${b.phone}`} {b.package_name && `· ${b.package_name}`} — {b.status}
-                          </span>
-                          {b.status === "confirmed" && (
-                            <span className="space-x-2">
-                              <button onClick={() => void attended(b.id, s.id)} className="text-sage-600 hover:underline">
-                                Attended
-                              </button>
-                              <button onClick={() => void noShow(b.id, s.id)} className="text-red-500 hover:underline">
-                                No-show
-                              </button>
-                            </span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                    <p className="font-medium mb-1">Waitlist</p>
-                    {waitlist.length === 0 && <p className="text-sage-400">Nobody waiting.</p>}
-                    <ul className="space-y-1">
-                      {waitlist.map((w) => (
-                        <li key={w.id}>
-                          user #{w.user_id} — {w.status}
-                        </li>
-                      ))}
-                    </ul>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm bg-white rounded-lg overflow-hidden border border-sage-200">
+          <thead className="bg-sage-100 text-left">
+            <tr>
+              <th className="p-2">Class</th>
+              <th className="p-2">Instructor</th>
+              <th className="p-2">Start</th>
+              <th className="p-2">Booked</th>
+              <th className="p-2">Status</th>
+              <th className="p-2" />
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((s) => (
+              <Fragment key={s.id}>
+                <tr className="border-t border-sage-100 cursor-pointer" onClick={() => void toggleExpand(s.id)}>
+                  <td className="p-2">{s.class_name}</td>
+                  <td className="p-2">{s.instructor_name ?? "—"}</td>
+                  <td className="p-2">{new Date(s.start_time).toLocaleString()}</td>
+                  <td className="p-2">{s.booked_count}</td>
+                  <td className="p-2">{s.status}{s.opened_manually ? " (manual)" : ""}</td>
+                  <td className="p-2 space-x-2" onClick={(e) => e.stopPropagation()}>
+                    {s.status !== "cancelled_by_studio" && !s.opened_manually && (
+                      <button onClick={() => void openManually(s.id)} className="text-sage-600 hover:underline">
+                        Open manually
+                      </button>
+                    )}
+                    {s.status !== "cancelled_by_studio" && (
+                      <button onClick={() => setCancelTargetId(s.id)} className="text-red-500 hover:underline">
+                        Cancel
+                      </button>
+                    )}
                   </td>
                 </tr>
-              )}
-            </Fragment>
-          ))}
-        </tbody>
-      </table>
+                {expanded === s.id && (
+                  <tr key={`${s.id}-detail`} className="border-t border-sage-100 bg-sage-50">
+                    <td colSpan={6} className="p-3">
+                      <p className="font-medium mb-1">Roster</p>
+                      {roster.length === 0 && <p className="text-sage-400">No bookings.</p>}
+                      <ul className="space-y-1 mb-3">
+                        {roster.map((b) => (
+                          <li key={b.id} className="flex justify-between items-center">
+                            <span>
+                              {b.user_name} {b.phone && `· ${b.phone}`} {b.package_name && `· ${b.package_name}`} — {b.status}
+                            </span>
+                            {b.status === "confirmed" && (
+                              <span className="space-x-2">
+                                <button onClick={() => void attended(b.id, s.id)} className="text-sage-600 hover:underline">
+                                  Attended
+                                </button>
+                                <button onClick={() => void noShow(b.id, s.id)} className="text-red-500 hover:underline">
+                                  No-show
+                                </button>
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="font-medium mb-1">Waitlist</p>
+                      {waitlist.length === 0 && <p className="text-sage-400">Nobody waiting.</p>}
+                      <ul className="space-y-1">
+                        {waitlist.map((w) => (
+                          <li key={w.id}>
+                            user #{w.user_id} — {w.status}
+                          </li>
+                        ))}
+                      </ul>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {cancelTargetId != null && (
+        <PromptModal
+          title="Cancellation reason (optional)"
+          placeholder="Reason"
+          submitLabel="Cancel session"
+          onClose={() => setCancelTargetId(null)}
+          onSubmit={(value) => {
+            const id = cancelTargetId;
+            setCancelTargetId(null);
+            void cancel(id, value.trim() || undefined);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -588,40 +606,42 @@ function PackageCatalogTab() {
   }
 
   return (
-    <table className="w-full text-sm bg-white rounded-lg overflow-hidden border border-sage-200">
-      <thead className="bg-sage-100 text-left">
-        <tr>
-          <th className="p-2">Name</th>
-          <th className="p-2">Price</th>
-          <th className="p-2">Credits</th>
-          <th className="p-2">Validity</th>
-          <th className="p-2">Renewable</th>
-          <th className="p-2">Shared</th>
-          <th className="p-2">Active</th>
-          <th className="p-2" />
-        </tr>
-      </thead>
-      <tbody>
-        {items.map((p) => (
-          <tr key={p.id} className="border-t border-sage-100">
-            <td className="p-2">{p.name}</td>
-            <td className="p-2">
-              {(p.price_cents / 100).toFixed(2)} {p.currency}
-            </td>
-            <td className="p-2">{p.credits ?? "Unlimited"}</td>
-            <td className="p-2">{p.validity_value ? `${p.validity_value} ${p.validity_unit}` : "—"}</td>
-            <td className="p-2">{p.renewable ? "Yes" : "No"}</td>
-            <td className="p-2">{p.shared ? "Yes" : "No"}</td>
-            <td className="p-2">{p.active ? "Yes" : "No"}</td>
-            <td className="p-2">
-              <button onClick={() => void toggleActive(p)} className="text-sage-600 hover:underline">
-                {p.active ? "Deactivate" : "Activate"}
-              </button>
-            </td>
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm bg-white rounded-lg overflow-hidden border border-sage-200">
+        <thead className="bg-sage-100 text-left">
+          <tr>
+            <th className="p-2">Name</th>
+            <th className="p-2">Price</th>
+            <th className="p-2">Credits</th>
+            <th className="p-2">Validity</th>
+            <th className="p-2">Renewable</th>
+            <th className="p-2">Shared</th>
+            <th className="p-2">Active</th>
+            <th className="p-2" />
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {items.map((p) => (
+            <tr key={p.id} className="border-t border-sage-100">
+              <td className="p-2">{p.name}</td>
+              <td className="p-2">
+                {(p.price_cents / 100).toFixed(2)} {p.currency}
+              </td>
+              <td className="p-2">{p.credits ?? "Unlimited"}</td>
+              <td className="p-2">{p.validity_value ? `${p.validity_value} ${p.validity_unit}` : "—"}</td>
+              <td className="p-2">{p.renewable ? "Yes" : "No"}</td>
+              <td className="p-2">{p.shared ? "Yes" : "No"}</td>
+              <td className="p-2">{p.active ? "Yes" : "No"}</td>
+              <td className="p-2">
+                <button onClick={() => void toggleActive(p)} className="text-sage-600 hover:underline">
+                  {p.active ? "Deactivate" : "Activate"}
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -687,15 +707,14 @@ function PendingPaymentsTab() {
 
 function ExpiryFlagsTab() {
   const [items, setItems] = useState<MemberPackageRow[]>([]);
+  const [extendTarget, setExtendTarget] = useState<MemberPackageRow | null>(null);
 
   function load() {
     adminApi.expiryExtensionFlags().then((r) => setItems(r.flagged));
   }
   useEffect(load, []);
 
-  async function extend(mp: MemberPackageRow) {
-    const newExpiresAt = window.prompt("New expiry date (YYYY-MM-DD):");
-    if (!newExpiresAt) return;
+  async function extend(mp: MemberPackageRow, newExpiresAt: string) {
     await adminApi.extendExpiry(mp.id, new Date(newExpiresAt).toISOString(), "2+ studio-cancelled classes");
     load();
   }
@@ -712,12 +731,26 @@ function ExpiryFlagsTab() {
             <span>
               {mp.user_name} — {mp.package_name} ({mp.studio_cancelled_class_count} studio cancellations)
             </span>
-            <button onClick={() => void extend(mp)} className="text-sm bg-sage-500 text-white px-2 py-1 rounded-md">
+            <button onClick={() => setExtendTarget(mp)} className="text-sm bg-sage-500 text-white px-2 py-1 rounded-md">
               Extend expiry
             </button>
           </li>
         ))}
       </ul>
+      {extendTarget && (
+        <PromptModal
+          title={`New expiry date for ${extendTarget.user_name}`}
+          type="date"
+          required
+          submitLabel="Extend"
+          onClose={() => setExtendTarget(null)}
+          onSubmit={(value) => {
+            const mp = extendTarget;
+            setExtendTarget(null);
+            void extend(mp, value);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -835,26 +868,28 @@ function BookingsTab() {
     adminApi.listBookings().then((r) => setItems(r.bookings));
   }, []);
   return (
-    <table className="w-full text-sm bg-white rounded-lg overflow-hidden border border-sage-200">
-      <thead className="bg-sage-100 text-left">
-        <tr>
-          <th className="p-2">Customer</th>
-          <th className="p-2">Class</th>
-          <th className="p-2">Start</th>
-          <th className="p-2">Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        {items.map((b) => (
-          <tr key={b.id} className="border-t border-sage-100">
-            <td className="p-2">{b.user_name}</td>
-            <td className="p-2">{b.class_name}</td>
-            <td className="p-2">{new Date(b.start_time).toLocaleString()}</td>
-            <td className="p-2">{b.status}</td>
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm bg-white rounded-lg overflow-hidden border border-sage-200">
+        <thead className="bg-sage-100 text-left">
+          <tr>
+            <th className="p-2">Customer</th>
+            <th className="p-2">Class</th>
+            <th className="p-2">Start</th>
+            <th className="p-2">Status</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {items.map((b) => (
+            <tr key={b.id} className="border-t border-sage-100">
+              <td className="p-2">{b.user_name}</td>
+              <td className="p-2">{b.class_name}</td>
+              <td className="p-2">{new Date(b.start_time).toLocaleString()}</td>
+              <td className="p-2">{b.status}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -864,29 +899,31 @@ function PaymentsTab() {
     adminApi.listPayments().then((r) => setItems(r.payments));
   }, []);
   return (
-    <table className="w-full text-sm bg-white rounded-lg overflow-hidden border border-sage-200">
-      <thead className="bg-sage-100 text-left">
-        <tr>
-          <th className="p-2">Customer</th>
-          <th className="p-2">For</th>
-          <th className="p-2">Amount</th>
-          <th className="p-2">Status</th>
-          <th className="p-2">When</th>
-        </tr>
-      </thead>
-      <tbody>
-        {items.map((p) => (
-          <tr key={p.id} className="border-t border-sage-100">
-            <td className="p-2">{p.user_name ?? "—"}</td>
-            <td className="p-2">{p.package_name ?? "Package extension"}</td>
-            <td className="p-2">
-              {(p.amount_cents / 100).toFixed(2)} {p.currency}
-            </td>
-            <td className="p-2">{p.status}</td>
-            <td className="p-2">{new Date(p.created_at).toLocaleString()}</td>
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm bg-white rounded-lg overflow-hidden border border-sage-200">
+        <thead className="bg-sage-100 text-left">
+          <tr>
+            <th className="p-2">Customer</th>
+            <th className="p-2">For</th>
+            <th className="p-2">Amount</th>
+            <th className="p-2">Status</th>
+            <th className="p-2">When</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {items.map((p) => (
+            <tr key={p.id} className="border-t border-sage-100">
+              <td className="p-2">{p.user_name ?? "—"}</td>
+              <td className="p-2">{p.package_name ?? "Package extension"}</td>
+              <td className="p-2">
+                {(p.amount_cents / 100).toFixed(2)} {p.currency}
+              </td>
+              <td className="p-2">{p.status}</td>
+              <td className="p-2">{new Date(p.created_at).toLocaleString()}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
