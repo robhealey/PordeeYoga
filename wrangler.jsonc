@@ -1,0 +1,47 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "pordee-yoga",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pordee-yoga-db",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "migrations_dir": "./worker/migrations"
+    }
+  ],
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+  "vars": {
+    "ENVIRONMENT": "development",
+    "DEV_MOCK_AUTH": "true",
+    "STUDIO_NAME": "Pordee Yoga",
+    "TIMEZONE": "Asia/Bangkok",
+    "BOOKING_EXPIRY_MINUTES": "15",
+    "REMINDER_HOURS_BEFORE": "2"
+  },
+  "env": {
+    "production": {
+      "vars": {
+        "ENVIRONMENT": "production",
+        "DEV_MOCK_AUTH": "false",
+        "STUDIO_NAME": "Pordee Yoga",
+        "TIMEZONE": "Asia/Bangkok",
+        "BOOKING_EXPIRY_MINUTES": "15",
+        "REMINDER_HOURS_BEFORE": "2"
+      }
+    }
+  }
+}

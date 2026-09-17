@@ -1,0 +1,28 @@
+{
+  "name": "pordee-yoga",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n worker,frontend -c blue,green \"npm:dev:worker\" \"npm:dev:frontend\"",
+    "dev:worker": "wrangler dev --port 8789",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build:frontend": "npm --prefix frontend run build:for-worker",
+    "build": "npm run build:frontend",
+    "deploy": "npm run build && wrangler deploy",
+    "typecheck": "tsc --noEmit -p worker/tsconfig.json && tsc --noEmit -p frontend/tsconfig.json",
+    "test": "vitest run",
+    "db:migrate:local": "wrangler d1 migrations apply pordee-yoga-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply pordee-yoga-db --remote"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.9.4",
+    "@cloudflare/workers-types": "*",
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.9",
+    "wrangler": "^4.111.0"
+  },
+  "dependencies": {
+    "hono": "^4.6.20"
+  }
+}
