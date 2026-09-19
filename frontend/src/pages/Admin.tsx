@@ -11,6 +11,7 @@ import {
   type MemberPackageRow,
   type MemberRow,
   type PackageCatalogRow,
+  type ParsedScheduleSession,
   type PendingPaymentRow,
   type SessionBookingRow,
   type SessionRow,
@@ -113,43 +114,56 @@ function ClassTypesTab() {
 
   return (
     <div>
-      <form onSubmit={(e) => void submit(e)} className="flex flex-wrap gap-2 mb-4 bg-white p-3 rounded-lg border border-sage-200">
-        <input
-          required
-          placeholder="Name (e.g. Vinyasa Flow)"
-          value={form.name}
-          onChange={(e) => setForm({ ...form, name: e.target.value })}
-          className="border border-sage-200 rounded-md px-2 py-1"
-        />
-        <input
-          type="number"
-          placeholder="Minutes"
-          value={form.durationMinutes}
-          onChange={(e) => setForm({ ...form, durationMinutes: Number(e.target.value) })}
-          className="w-24 border border-sage-200 rounded-md px-2 py-1"
-        />
-        <input
-          type="number"
-          placeholder="Capacity"
-          value={form.capacity}
-          onChange={(e) => setForm({ ...form, capacity: Number(e.target.value) })}
-          className="w-24 border border-sage-200 rounded-md px-2 py-1"
-        />
-        <input
-          type="number"
-          placeholder="Min to confirm"
-          value={form.minConfirmCount}
-          onChange={(e) => setForm({ ...form, minConfirmCount: Number(e.target.value) })}
-          className="w-28 border border-sage-200 rounded-md px-2 py-1"
-        />
-        <input
-          type="number"
-          placeholder="Reference price (satang)"
-          value={form.priceCents}
-          onChange={(e) => setForm({ ...form, priceCents: Number(e.target.value) })}
-          className="w-40 border border-sage-200 rounded-md px-2 py-1"
-        />
-        <button className="bg-sage-500 text-white px-3 py-1 rounded-md">Add class type</button>
+      <form onSubmit={(e) => void submit(e)} className="flex flex-wrap gap-3 mb-4 bg-white p-3 rounded-lg border border-sage-200">
+        <label className="flex flex-col text-xs text-sage-500 gap-1">
+          Name
+          <input
+            required
+            placeholder="e.g. Vinyasa Flow"
+            value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+            className="border border-sage-200 rounded-md px-2 py-1 text-sm text-sage-800"
+          />
+        </label>
+        <label className="flex flex-col text-xs text-sage-500 gap-1">
+          Duration (minutes)
+          <input
+            type="number"
+            value={form.durationMinutes}
+            onChange={(e) => setForm({ ...form, durationMinutes: Number(e.target.value) })}
+            className="w-24 border border-sage-200 rounded-md px-2 py-1 text-sm text-sage-800"
+          />
+        </label>
+        <label className="flex flex-col text-xs text-sage-500 gap-1">
+          Capacity (spots)
+          <input
+            type="number"
+            value={form.capacity}
+            onChange={(e) => setForm({ ...form, capacity: Number(e.target.value) })}
+            className="w-24 border border-sage-200 rounded-md px-2 py-1 text-sm text-sage-800"
+          />
+        </label>
+        <label className="flex flex-col text-xs text-sage-500 gap-1">
+          Min bookings to confirm
+          <input
+            type="number"
+            value={form.minConfirmCount}
+            onChange={(e) => setForm({ ...form, minConfirmCount: Number(e.target.value) })}
+            className="w-28 border border-sage-200 rounded-md px-2 py-1 text-sm text-sage-800"
+          />
+        </label>
+        <label className="flex flex-col text-xs text-sage-500 gap-1">
+          Price (THB)
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={form.priceCents / 100}
+            onChange={(e) => setForm({ ...form, priceCents: Math.round(Number(e.target.value) * 100) })}
+            className="w-28 border border-sage-200 rounded-md px-2 py-1 text-sm text-sage-800"
+          />
+        </label>
+        <button className="bg-sage-500 text-white px-3 py-1 rounded-md self-end">Add class type</button>
       </form>
       {error && <p className="text-red-600 mb-2">{error}</p>}
       <div className="overflow-x-auto">
@@ -348,6 +362,9 @@ function SessionsTab() {
         />
         <button className="bg-sage-500 text-white px-3 py-1 rounded-md">Schedule class</button>
       </form>
+
+      <ScheduleImportPanel classTypes={classTypes} instructors={instructors} onImported={load} />
+
       {error && <p className="text-red-600 mb-2">{error}</p>}
       <div className="overflow-x-auto">
         <table className="w-full text-sm bg-white rounded-lg overflow-hidden border border-sage-200">
@@ -437,6 +454,383 @@ function SessionsTab() {
           }}
         />
       )}
+
+      <WeeklyCalendar sessions={items} onSelect={(id) => void toggleExpand(id)} />
+    </div>
+  );
+}
+
+// -- Weekly calendar view ----------------------------------------------------------
+
+const STUDIO_TZ = "Asia/Bangkok";
+const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function tzDateKey(iso: string): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: STUDIO_TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(
+    new Date(iso)
+  );
+}
+
+/** Monday (in STUDIO_TZ) of the week containing `dateKey` (a "YYYY-MM-DD" civil date). */
+function mondayOfWeek(dateKey: string): Date {
+  const d = new Date(`${dateKey}T00:00:00Z`);
+  const day = d.getUTCDay(); // 0 = Sunday .. 6 = Saturday
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setUTCDate(d.getUTCDate() + diff);
+  return d;
+}
+
+function addDays(d: Date, n: number): Date {
+  const copy = new Date(d);
+  copy.setUTCDate(copy.getUTCDate() + n);
+  return copy;
+}
+
+function toDateKey(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function formatDayTime(iso: string) {
+  return new Date(iso).toLocaleString("en-US", { timeZone: STUDIO_TZ, hour: "numeric", minute: "2-digit" });
+}
+
+const CALENDAR_STATUS_STYLE: Record<string, string> = {
+  cancelled_by_studio: "bg-red-50 border-red-200 text-red-500 line-through",
+  full: "bg-amber-50 border-amber-200 text-amber-700",
+  confirmed: "bg-sage-100 border-sage-300 text-sage-800",
+  scheduled: "bg-white border-sage-200 text-sage-700",
+  completed: "bg-sage-50 border-sage-100 text-sage-400",
+};
+
+function WeeklyCalendar({ sessions, onSelect }: { sessions: SessionRow[]; onSelect: (id: number) => void }) {
+  const [weekStart, setWeekStart] = useState(() => mondayOfWeek(tzDateKey(new Date().toISOString())));
+
+  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+  const byDay = new Map<string, SessionRow[]>();
+  for (const s of sessions) {
+    const key = tzDateKey(s.start_time);
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key)!.push(s);
+  }
+  for (const list of byDay.values()) {
+    list.sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+  }
+
+  const rangeLabel = `${weekStart.toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric" })} – ${addDays(
+    weekStart,
+    6
+  ).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" })}`;
+
+  return (
+    <div className="mt-8">
+      <div className="flex items-center gap-2 mb-3">
+        <h2 className="font-medium text-sage-800 flex-1">Weekly calendar</h2>
+        <button
+          onClick={() => setWeekStart((d) => addDays(d, -7))}
+          className="w-8 h-8 flex items-center justify-center rounded-full border border-sage-200 bg-white hover:border-sage-400"
+          aria-label="Previous week"
+        >
+          ‹
+        </button>
+        <span className="text-sm text-sage-600 w-40 text-center">{rangeLabel}</span>
+        <button
+          onClick={() => setWeekStart((d) => addDays(d, 7))}
+          className="w-8 h-8 flex items-center justify-center rounded-full border border-sage-200 bg-white hover:border-sage-400"
+          aria-label="Next week"
+        >
+          ›
+        </button>
+        <button
+          onClick={() => setWeekStart(mondayOfWeek(tzDateKey(new Date().toISOString())))}
+          className="text-sm text-sage-600 underline"
+        >
+          This week
+        </button>
+      </div>
+      <div className="overflow-x-auto">
+        <div className="grid grid-cols-7 gap-2 min-w-[700px]">
+          {days.map((d) => {
+            const key = toDateKey(d);
+            const daySessions = byDay.get(key) ?? [];
+            const isToday = key === tzDateKey(new Date().toISOString());
+            return (
+              <div key={key} className={`rounded-lg border p-2 min-h-[8rem] ${isToday ? "border-sage-400 bg-sage-50/50" : "border-sage-200 bg-white"}`}>
+                <div className="text-xs font-medium text-sage-500 mb-1">
+                  {WEEKDAY_LABELS[(d.getUTCDay() + 6) % 7]}{" "}
+                  {d.toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric" })}
+                </div>
+                <div className="space-y-1">
+                  {daySessions.length === 0 && <p className="text-xs text-sage-300">—</p>}
+                  {daySessions.map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => onSelect(s.id)}
+                      className={`w-full text-left text-xs rounded-md border px-1.5 py-1 hover:shadow-sm ${
+                        CALENDAR_STATUS_STYLE[s.status] ?? "bg-white border-sage-200 text-sage-700"
+                      }`}
+                    >
+                      <div className="font-medium">{formatDayTime(s.start_time)} {s.class_name}</div>
+                      <div className="text-[11px] opacity-80">
+                        {s.instructor_name ?? "—"} · {s.booked_count}/{s.capacity_override ?? s.class_capacity}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// -- Import schedule from a photo (AI-assisted) -----------------------------------
+
+const DAY_INDEX: Record<string, number> = {
+  monday: 0,
+  tuesday: 1,
+  wednesday: 2,
+  thursday: 3,
+  friday: 4,
+  saturday: 5,
+  sunday: 6,
+};
+
+interface ImportRow extends ParsedScheduleSession {
+  include: boolean;
+  classTypeId: string;
+  instructorName: string;
+  time: string;
+  durationMinutes: number;
+}
+
+function nextMonday(): string {
+  const d = new Date();
+  const day = d.getDay(); // 0 = Sunday
+  const diff = day === 1 ? 0 : ((8 - day) % 7) || 7;
+  d.setDate(d.getDate() + (day === 1 ? 0 : diff));
+  return d.toISOString().slice(0, 10);
+}
+
+function ScheduleImportPanel({
+  classTypes,
+  instructors,
+  onImported,
+}: {
+  classTypes: { id: number; name: string }[];
+  instructors: { id: number; name: string }[];
+  onImported: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [rows, setRows] = useState<ImportRow[]>([]);
+  const [weekStart, setWeekStart] = useState(nextMonday());
+  const [creating, setCreating] = useState(false);
+
+  function matchClassTypeId(name: string): string {
+    const match = classTypes.find((ct) => ct.name.toLowerCase() === name.toLowerCase());
+    return match ? String(match.id) : "";
+  }
+
+  async function handleFile(file: File) {
+    setBusy(true);
+    setError(null);
+    setRows([]);
+    try {
+      const imageBase64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const { sessions } = await adminApi.parseScheduleImage(imageBase64);
+      setRows(
+        sessions.map((s) => ({
+          ...s,
+          include: true,
+          classTypeId: matchClassTypeId(s.className),
+          instructorName: s.instructorName ?? "",
+          time: s.time ?? "09:00",
+          durationMinutes: s.durationMinutes ?? 60,
+        }))
+      );
+      if (sessions.length === 0) setError("Couldn't find any sessions in that image — try a clearer photo.");
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function updateRow(i: number, patch: Partial<ImportRow>) {
+    setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  }
+
+  async function createSessions() {
+    setCreating(true);
+    setError(null);
+    try {
+      const instructorIdByName = new Map<string, number>(
+        instructors.map((i) => [i.name.toLowerCase(), i.id] as const)
+      );
+      for (const row of rows) {
+        if (!row.include || !row.classTypeId) continue;
+
+        let instructorId: number | null = null;
+        const name = row.instructorName.trim();
+        if (name) {
+          const existing = instructorIdByName.get(name.toLowerCase());
+          if (existing) {
+            instructorId = existing;
+          } else {
+            const { instructor } = await adminApi.createInstructor({ name });
+            instructorIdByName.set(name.toLowerCase(), instructor.id);
+            instructorId = instructor.id;
+          }
+        }
+
+        const dateStr = row.date ?? (() => {
+          const base = new Date(`${weekStart}T00:00:00`);
+          const offset = row.dayOfWeek ? DAY_INDEX[row.dayOfWeek.toLowerCase()] ?? 0 : 0;
+          base.setDate(base.getDate() + offset);
+          return base.toISOString().slice(0, 10);
+        })();
+        const start = new Date(`${dateStr}T${row.time}:00`);
+        const end = new Date(start.getTime() + row.durationMinutes * 60000);
+
+        await adminApi.createSession({
+          classTypeId: Number(row.classTypeId),
+          instructorId,
+          startTime: start.toISOString(),
+          endTime: end.toISOString(),
+        });
+      }
+      setRows([]);
+      setOpen(false);
+      onImported();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  return (
+    <div className="mb-4 bg-white p-3 rounded-lg border border-sage-200">
+      <button onClick={() => setOpen((o) => !o)} className="text-sm font-medium text-sage-700">
+        {open ? "▾" : "▸"} Import schedule from a photo
+      </button>
+      {open && (
+        <div className="mt-3 space-y-3">
+          <p className="text-sm text-sage-500">
+            Upload a photo of a printed timetable or whiteboard — AI will read the teachers and class times so you
+            can review and create them as real sessions below.
+          </p>
+          <input
+            type="file"
+            accept="image/*"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void handleFile(file);
+            }}
+            className="text-sm"
+          />
+          {busy && <p className="text-sm text-sage-500">Reading image…</p>}
+          {error && <p className="text-sm text-red-600">{error}</p>}
+
+          {rows.length > 0 && (
+            <>
+              <div className="flex items-center gap-2 text-sm">
+                <label>Week starting (Monday):</label>
+                <input
+                  type="date"
+                  value={weekStart}
+                  onChange={(e) => setWeekStart(e.target.value)}
+                  className="border border-sage-200 rounded-md px-2 py-1"
+                />
+                <span className="text-sage-400">— used for rows extracted as a day-of-week (e.g. "Monday")</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-sage-100 text-left">
+                    <tr>
+                      <th className="p-1"></th>
+                      <th className="p-1">Extracted name</th>
+                      <th className="p-1">Class type</th>
+                      <th className="p-1">Instructor</th>
+                      <th className="p-1">Day/Date</th>
+                      <th className="p-1">Time</th>
+                      <th className="p-1">Minutes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row, i) => (
+                      <tr key={i} className="border-t border-sage-100">
+                        <td className="p-1">
+                          <input
+                            type="checkbox"
+                            checked={row.include}
+                            onChange={(e) => updateRow(i, { include: e.target.checked })}
+                          />
+                        </td>
+                        <td className="p-1">{row.className}</td>
+                        <td className="p-1">
+                          <select
+                            value={row.classTypeId}
+                            onChange={(e) => updateRow(i, { classTypeId: e.target.value })}
+                            className="border border-sage-200 rounded-md px-1 py-0.5"
+                          >
+                            <option value="">Choose…</option>
+                            {classTypes.map((ct) => (
+                              <option key={ct.id} value={ct.id}>
+                                {ct.name}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="p-1">
+                          <input
+                            value={row.instructorName}
+                            onChange={(e) => updateRow(i, { instructorName: e.target.value })}
+                            placeholder="Instructor"
+                            className="w-28 border border-sage-200 rounded-md px-1 py-0.5"
+                          />
+                        </td>
+                        <td className="p-1 text-sage-500">{row.date ?? row.dayOfWeek ?? "—"}</td>
+                        <td className="p-1">
+                          <input
+                            type="time"
+                            value={row.time}
+                            onChange={(e) => updateRow(i, { time: e.target.value })}
+                            className="border border-sage-200 rounded-md px-1 py-0.5"
+                          />
+                        </td>
+                        <td className="p-1">
+                          <input
+                            type="number"
+                            value={row.durationMinutes}
+                            onChange={(e) => updateRow(i, { durationMinutes: Number(e.target.value) })}
+                            className="w-16 border border-sage-200 rounded-md px-1 py-0.5"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button
+                onClick={() => void createSessions()}
+                disabled={creating || rows.every((r) => !r.include || !r.classTypeId)}
+                className="bg-sage-500 disabled:bg-sage-200 text-white px-3 py-1.5 rounded-md text-sm"
+              >
+                {creating ? "Creating…" : `Create ${rows.filter((r) => r.include && r.classTypeId).length} session(s)`}
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -480,6 +874,13 @@ function MembersTab() {
     if (!detail) return;
     await adminApi.issueBirthdayCoupon(detail.member.id);
     setDetail(await adminApi.getMember(detail.member.id));
+  }
+
+  async function changeRole(role: string) {
+    if (!detail) return;
+    await adminApi.updateMember(detail.member.id, { role });
+    setDetail(await adminApi.getMember(detail.member.id));
+    load();
   }
 
   return (
@@ -528,7 +929,19 @@ function MembersTab() {
           <div className="bg-white border border-sage-200 rounded-lg p-4">
             <h2 className="font-medium text-lg">{detail.member.display_name}</h2>
             <p className="text-sm text-sage-500">{detail.member.phone ?? "No phone on file"}</p>
-            <p className="text-sm text-sage-500">Role: {detail.member.role}</p>
+            <div className="text-sm text-sage-500 mt-1 flex items-center gap-2">
+              <label htmlFor="member-role">Role:</label>
+              <select
+                id="member-role"
+                value={detail.member.role}
+                onChange={(e) => void changeRole(e.target.value)}
+                className="border border-sage-200 rounded-md px-2 py-0.5 text-sm"
+              >
+                <option value="customer">customer</option>
+                <option value="instructor">instructor</option>
+                <option value="admin">admin</option>
+              </select>
+            </div>
 
             <div className="mt-3 flex gap-2 items-center">
               <select

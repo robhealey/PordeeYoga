@@ -2,18 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type ClassSession, type MemberPackage, type MyBooking } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
+import { useLanguage } from "../lib/i18n";
+import { adminApi } from "../lib/adminApi";
+import { PromptModal } from "../components/PromptModal";
 
 // The studio operates in Asia/Bangkok — group/label days in that timezone regardless of the
 // viewer's own device timezone, so "today"/"tomorrow" always matches what the studio means.
 const STUDIO_TZ = "Asia/Bangkok";
-
-const statusLabel: Record<string, string> = {
-  scheduled: "Open",
-  confirmed: "Confirmed",
-  full: "Full",
-  cancelled_by_studio: "Cancelled",
-  completed: "Completed",
-};
 
 function dateKey(iso: string): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: STUDIO_TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(
@@ -27,18 +22,6 @@ function dayChipLabel(iso: string): { weekday: string; day: string } {
     weekday: new Intl.DateTimeFormat("en-US", { timeZone: STUDIO_TZ, weekday: "short" }).format(d),
     day: new Intl.DateTimeFormat("en-US", { timeZone: STUDIO_TZ, day: "numeric" }).format(d),
   };
-}
-
-function dayHeaderLabel(iso: string): string {
-  const today = dateKey(new Date().toISOString());
-  const tomorrow = dateKey(new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString());
-  const key = dateKey(iso);
-  const full = new Intl.DateTimeFormat("en-US", { timeZone: STUDIO_TZ, weekday: "long", month: "short", day: "numeric" }).format(
-    new Date(iso)
-  );
-  if (key === today) return `Today · ${full}`;
-  if (key === tomorrow) return `Tomorrow · ${full}`;
-  return full;
 }
 
 function formatTime(iso: string) {
@@ -56,13 +39,9 @@ function formatWhen(iso: string) {
   });
 }
 
-function creditsLabel(mp: MemberPackage): string {
-  if (mp.credits_total == null) return "Unlimited";
-  return `${Math.max(0, mp.credits_total - mp.credits_used)} left`;
-}
-
 function MemberSummary() {
   const { user } = useAuth();
+  const { t } = useLanguage();
   const [packages, setPackages] = useState<MemberPackage[] | null>(null);
   const [nextBooking, setNextBooking] = useState<MyBooking | null>(null);
 
@@ -81,15 +60,20 @@ function MemberSummary() {
   if (packages == null) return null; // still loading, or nothing to show yet
   if (packages.length === 0 && !nextBooking) return null;
 
+  function creditsLabel(mp: MemberPackage): string {
+    if (mp.credits_total == null) return t("classDetail.unlimited");
+    return t("classDetail.creditsLeft", { n: Math.max(0, mp.credits_total - mp.credits_used) });
+  }
+
   return (
     <div className="mb-6 bg-sage-600 text-white rounded-lg p-4">
-      <p className="text-sm text-sage-100">Hi {user.display_name.split(" ")[0]},</p>
+      <p className="text-sm text-sage-100">{t("schedule.hi", { name: user.display_name.split(" ")[0] })}</p>
       {nextBooking ? (
         <p className="mt-1 font-medium">
-          Next class: {nextBooking.class_name} — {formatWhen(nextBooking.start_time)}
+          {t("schedule.nextClass", { className: nextBooking.class_name, when: formatWhen(nextBooking.start_time) })}
         </p>
       ) : (
-        <p className="mt-1 font-medium">No upcoming classes booked yet.</p>
+        <p className="mt-1 font-medium">{t("schedule.noUpcomingBooked")}</p>
       )}
       {packages.length > 0 && (
         <ul className="mt-3 space-y-1 text-sm">
@@ -102,13 +86,26 @@ function MemberSummary() {
         </ul>
       )}
       <Link to="/packages" className="inline-block mt-3 text-xs text-sage-100 underline">
-        Manage packages
+        {t("schedule.managePackages")}
       </Link>
     </div>
   );
 }
 
-function DaySchedule({ sessions }: { sessions: ClassSession[] }) {
+function DaySchedule({ sessions, onChanged }: { sessions: ClassSession[]; onChanged: () => void }) {
+  const { t } = useLanguage();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const [cancelTargetId, setCancelTargetId] = useState<number | null>(null);
+
+  const statusLabel: Record<string, string> = {
+    scheduled: t("status.scheduled"),
+    confirmed: t("status.confirmed"),
+    full: t("status.full"),
+    cancelled_by_studio: t("status.cancelled_by_studio"),
+    completed: t("status.completed"),
+  };
+
   const days = useMemo(() => {
     const groups = new Map<string, ClassSession[]>();
     for (const s of sessions) {
@@ -129,7 +126,24 @@ function DaySchedule({ sessions }: { sessions: ClassSession[] }) {
     setIndex(0);
   }, [days.length]);
 
-  if (days.length === 0) return <p className="text-sage-500">No upcoming classes yet.</p>;
+  function dayHeaderLabel(iso: string): string {
+    const today = dateKey(new Date().toISOString());
+    const tomorrow = dateKey(new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString());
+    const key = dateKey(iso);
+    const full = new Intl.DateTimeFormat("en-US", { timeZone: STUDIO_TZ, weekday: "long", month: "short", day: "numeric" }).format(
+      new Date(iso)
+    );
+    if (key === today) return `Today · ${full}`;
+    if (key === tomorrow) return `Tomorrow · ${full}`;
+    return full;
+  }
+
+  async function cancelSession(id: number, reason?: string) {
+    await adminApi.cancelSession(id, reason);
+    onChanged();
+  }
+
+  if (days.length === 0) return <p className="text-sage-500">{t("schedule.empty")}</p>;
 
   const current = days[Math.min(index, days.length - 1)];
 
@@ -139,7 +153,7 @@ function DaySchedule({ sessions }: { sessions: ClassSession[] }) {
         <button
           onClick={() => setIndex((i) => Math.max(0, i - 1))}
           disabled={index === 0}
-          aria-label="Previous day"
+          aria-label={t("schedule.prevDay")}
           className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full border border-sage-200 bg-white disabled:opacity-30 hover:border-sage-400"
         >
           ‹
@@ -148,7 +162,7 @@ function DaySchedule({ sessions }: { sessions: ClassSession[] }) {
         <button
           onClick={() => setIndex((i) => Math.min(days.length - 1, i + 1))}
           disabled={index === days.length - 1}
-          aria-label="Next day"
+          aria-label={t("schedule.nextDay")}
           className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full border border-sage-200 bg-white disabled:opacity-30 hover:border-sage-400"
         >
           ›
@@ -177,6 +191,7 @@ function DaySchedule({ sessions }: { sessions: ClassSession[] }) {
       <div className="space-y-3">
         {current.items.map((s) => {
           const started = new Date(s.start_time).getTime() <= Date.now();
+          const cancellable = isAdmin && !started && s.status !== "cancelled_by_studio";
           const content = (
             <>
               <div className={`w-16 shrink-0 font-medium ${started ? "text-sage-400" : "text-sage-700"}`}>
@@ -185,13 +200,27 @@ function DaySchedule({ sessions }: { sessions: ClassSession[] }) {
               <div className="flex-1">
                 <div className="flex justify-between items-start">
                   <h3 className={`font-medium ${started ? "text-sage-500" : ""}`}>{s.class_name}</h3>
-                  <span className="text-sage-500 text-xs">{started ? "Started" : statusLabel[s.status] ?? s.status}</span>
+                  <span className="text-sage-500 text-xs">{started ? t("schedule.started") : statusLabel[s.status] ?? s.status}</span>
                 </div>
-                {s.instructor_name && <p className="text-sm text-sage-500">with {s.instructor_name}</p>}
+                {s.instructor_name && <p className="text-sm text-sage-500">{t("classDetail.with", { name: s.instructor_name })}</p>}
                 {!started && (
-                  <p className="text-xs mt-2 text-sage-400">
-                    {s.spots_left > 0 ? `${s.spots_left} spots left` : "Full — join the waitlist"}
-                  </p>
+                  <div className="flex justify-between items-end mt-2">
+                    <p className="text-xs text-sage-400">
+                      {s.spots_left > 0 ? t("schedule.spotsLeft", { n: s.spots_left }) : t("schedule.full")}
+                    </p>
+                    {cancellable && (
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setCancelTargetId(s.id);
+                        }}
+                        className="text-xs text-red-500 hover:underline"
+                      >
+                        {t("schedule.cancel")}
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             </>
@@ -214,28 +243,45 @@ function DaySchedule({ sessions }: { sessions: ClassSession[] }) {
           );
         })}
       </div>
+
+      {cancelTargetId != null && (
+        <PromptModal
+          title={t("schedule.cancelReasonTitle")}
+          placeholder={t("schedule.cancelReasonPlaceholder")}
+          submitLabel={t("schedule.cancelSubmit")}
+          onClose={() => setCancelTargetId(null)}
+          onSubmit={(value) => {
+            const id = cancelTargetId;
+            setCancelTargetId(null);
+            void cancelSession(id, value.trim() || undefined);
+          }}
+        />
+      )}
     </div>
   );
 }
 
 export function Schedule() {
+  const { t } = useLanguage();
   const [sessions, setSessions] = useState<ClassSession[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  function load() {
     api
       .listClasses()
       .then((r) => setSessions(r.sessions))
       .catch((e) => setError(String(e)));
-  }, []);
+  }
+
+  useEffect(load, []);
 
   return (
     <div>
       <MemberSummary />
-      <h1 className="text-2xl font-semibold mb-4">Upcoming Classes</h1>
+      <h1 className="text-2xl font-semibold mb-4">{t("schedule.title")}</h1>
       {error && <p className="text-red-600">{error}</p>}
-      {!sessions && !error && <p className="text-sage-500">Loading classes…</p>}
-      {sessions && <DaySchedule sessions={sessions} />}
+      {!sessions && !error && <p className="text-sage-500">{t("schedule.loading")}</p>}
+      {sessions && <DaySchedule sessions={sessions} onChanged={load} />}
     </div>
   );
 }

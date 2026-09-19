@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, type MemberPackage, type PackageRenewal } from "../lib/api";
+import { useLanguage } from "../lib/i18n";
 
 function formatMoney(cents: number, currency: string) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
@@ -17,6 +18,7 @@ interface Payable {
 export function Checkout() {
   const { kind, id } = useParams<{ kind: "package" | "renewal"; id: string }>();
   const targetId = Number(id);
+  const { t } = useLanguage();
   const [payable, setPayable] = useState<Payable | null>(null);
   const [notified, setNotified] = useState(false);
   const [notifying, setNotifying] = useState(false);
@@ -40,7 +42,7 @@ export function Checkout() {
     const { renewal } = await api.getRenewal(targetId);
     const r = renewal as PackageRenewal;
     return {
-      description: "Package extension (+1 month)",
+      description: t("checkout.renewalDescription"),
       amountCents: r.fee_cents ?? 0,
       currency: "THB",
       isPaid: r.status === "applied",
@@ -84,51 +86,47 @@ export function Checkout() {
   }
 
   if (error) return <p className="text-red-600">{error}</p>;
-  if (!payable) return <p className="text-sage-500">Loading…</p>;
+  if (!payable) return <p className="text-sage-500">{t("classDetail.loading")}</p>;
 
   if (payable.isPaid) {
     return (
       <div className="max-w-md">
-        <h1 className="text-2xl font-semibold text-sage-700">Payment received! 🎉</h1>
+        <h1 className="text-2xl font-semibold text-sage-700">{t("checkout.paymentReceived")}</h1>
         <p className="mt-2 text-sage-600">{payable.description}</p>
         <Link to={kind === "renewal" ? "/packages" : "/"} className="inline-block mt-4 text-sage-600 underline">
-          {kind === "renewal" ? "Back to my packages" : "Browse classes"}
+          {kind === "renewal" ? t("checkout.backToPackages") : t("checkout.browseClasses")}
         </Link>
       </div>
     );
   }
 
   if (payable.isTerminal) {
-    return <p className="text-red-600">This purchase was cancelled or expired.</p>;
+    return <p className="text-red-600">{t("checkout.terminal")}</p>;
   }
 
   return (
     <div className="max-w-md">
-      <h1 className="text-2xl font-semibold">Checkout</h1>
+      <h1 className="text-2xl font-semibold">{t("checkout.title")}</h1>
       <p className="mt-1 text-sage-600">{payable.description}</p>
       <p className="mt-1 font-medium">{formatMoney(payable.amountCents, payable.currency)}</p>
 
       <div className="mt-4 border border-sage-200 rounded-lg p-4 bg-white">
-        <img src="/promptpay-qr.png" alt="PromptPay QR code" className="w-64 h-64 mx-auto object-contain" />
+        <img src="/promptpay-qr.jpg" alt="PromptPay QR code" className="w-64 h-64 mx-auto object-contain" />
         <p className="mt-3 text-sm text-sage-600 text-center">
-          Scan with your banking app and transfer exactly{" "}
-          <span className="font-medium">{formatMoney(payable.amountCents, payable.currency)}</span>.
+          {t("checkout.scanInstructions", { amount: formatMoney(payable.amountCents, payable.currency) })}
         </p>
       </div>
 
       <div className="mt-4">
         {notified ? (
-          <p className="text-sm text-sage-600 bg-sage-50 border border-sage-200 rounded-md p-3">
-            Thanks — we've let the studio know. Your package will activate as soon as they confirm the payment.
-            This page will update automatically.
-          </p>
+          <p className="text-sm text-sage-600 bg-sage-50 border border-sage-200 rounded-md p-3">{t("checkout.thanks")}</p>
         ) : (
           <button
             onClick={() => void notifyPaid()}
             disabled={notifying}
             className="w-full bg-sage-500 disabled:bg-sage-200 text-white px-4 py-2 rounded-md hover:bg-sage-600"
           >
-            {notifying ? "Letting the studio know…" : "I've paid"}
+            {notifying ? t("checkout.notifying") : t("checkout.ivePaid")}
           </button>
         )}
       </div>

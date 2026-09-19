@@ -1,6 +1,7 @@
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { AuthProvider } from "./lib/AuthContext";
+import { LanguageProvider } from "./lib/i18n";
 import { Schedule } from "./pages/Schedule";
 import { ClassDetail } from "./pages/ClassDetail";
 import { MyBookings } from "./pages/MyBookings";
@@ -14,27 +15,29 @@ import { Privacy } from "./pages/Privacy";
 export function App() {
   return (
     <BrowserRouter>
-      <AuthProvider>
-        <Routes>
-          <Route element={<Layout />}>
-            <Route path="/" element={<Schedule />} />
-            <Route path="/class/:id" element={<ClassDetail />} />
-            <Route path="/my-bookings" element={<MyBookings />} />
-            <Route path="/packages" element={<Packages />} />
-            <Route path="/checkout/:kind/:id" element={<Checkout />} />
-            <Route path="/login/callback" element={<LoginCallback />} />
-            <Route path="/privacy" element={<Privacy />} />
-            <Route
-              path="/admin"
-              element={
-                <RequireAdmin>
-                  <Admin />
-                </RequireAdmin>
-              }
-            />
-          </Route>
-        </Routes>
-      </AuthProvider>
+      <LanguageProvider>
+        <AuthProvider>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/" element={<Schedule />} />
+              <Route path="/class/:id" element={<ClassDetail />} />
+              <Route path="/my-bookings" element={<MyBookings />} />
+              <Route path="/packages" element={<Packages />} />
+              <Route path="/checkout/:kind/:id" element={<Checkout />} />
+              <Route path="/login/callback" element={<LoginCallback />} />
+              <Route path="/privacy" element={<Privacy />} />
+              <Route
+                path="/admin"
+                element={
+                  <RequireAdmin>
+                    <Admin />
+                  </RequireAdmin>
+                }
+              />
+            </Route>
+          </Routes>
+        </AuthProvider>
+      </LanguageProvider>
     </BrowserRouter>
   );
 }

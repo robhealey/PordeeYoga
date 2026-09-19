@@ -121,6 +121,83 @@ admin.get("/class-sessions", async (c) => {
   return c.json({ sessions: results });
 });
 
+interface ParsedScheduleSession {
+  className: string;
+  instructorName: string | null;
+  dayOfWeek: string | null; // "monday".."sunday", if the image shows a recurring weekly timetable
+  date: string | null; // YYYY-MM-DD, if the image shows specific dated sessions instead
+  time: string | null; // HH:MM, 24h
+  durationMinutes: number | null;
+}
+
+/** Section 4 assist: admin uploads a photo of a printed/whiteboard schedule; a vision model
+ * pulls out instructor names and a best-effort session list for the admin to review and edit
+ * before anything is actually created (see POST /class-sessions above for the real write path). */
+admin.post("/schedule-import/parse", async (c) => {
+  const body = await c.req.json<{ imageBase64: string }>();
+  if (!body.imageBase64) return c.json({ error: "imageBase64 is required" }, 400);
+
+  let bytes: Uint8Array;
+  try {
+    const binary = atob(body.imageBase64.replace(/^data:[^,]+,/, ""));
+    bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  } catch {
+    return c.json({ error: "imageBase64 could not be decoded" }, 400);
+  }
+
+  const prompt = `You are reading a yoga studio's class schedule from a photo (a printed timetable, a whiteboard, or a poster).
+Extract every teacher name and every class session you can find. Respond with ONLY minified JSON, no prose, no markdown fences, matching exactly this shape:
+{"instructors":["Name", ...],"sessions":[{"className":"...","instructorName":"Name or null","dayOfWeek":"monday|tuesday|wednesday|thursday|friday|saturday|sunday or null","date":"YYYY-MM-DD or null","time":"HH:MM in 24h or null","durationMinutes":number or null}]}
+Use "dayOfWeek" when the schedule is a recurring weekly grid (e.g. a column headed "Monday"). Use "date" instead only if the image shows specific calendar dates. If duration isn't stated, estimate from the time range shown, else use null. If you truly cannot read the image, return {"instructors":[],"sessions":[]}.`;
+
+  let response: unknown;
+  try {
+    const result = await c.env.AI.run("@cf/meta/llama-3.2-11b-vision-instruct", {
+      image: Array.from(bytes),
+      prompt,
+      max_tokens: 2048,
+    });
+    response = (result as { response?: unknown }).response;
+  } catch (err) {
+    console.error("schedule-import AI parse failed", err);
+    return c.json({ error: "Could not read that image" }, 502);
+  }
+
+  // The model usually returns `response` already parsed as an object when the prompt asks for
+  // JSON, but falls back to a plain string (sometimes wrapped in prose/markdown) — handle both.
+  let parsed: { instructors?: string[]; sessions?: ParsedScheduleSession[] };
+  if (response && typeof response === "object") {
+    parsed = response as { instructors?: string[]; sessions?: ParsedScheduleSession[] };
+  } else {
+    const raw = typeof response === "string" ? response : "";
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return c.json({ error: "Could not extract a schedule from that image", raw }, 502);
+    try {
+      parsed = JSON.parse(jsonMatch[0]);
+    } catch {
+      return c.json({ error: "Could not extract a schedule from that image", raw }, 502);
+    }
+  }
+
+  // The model sometimes emits the literal string "null" instead of a JSON null for empty fields.
+  function cleanNullish<T extends string | number | null | undefined>(v: T): T | null {
+    return typeof v === "string" && v.trim().toLowerCase() === "null" ? null : v ?? null;
+  }
+
+  return c.json({
+    instructors: parsed.instructors ?? [],
+    sessions: (parsed.sessions ?? []).map((s) => ({
+      className: s.className,
+      instructorName: cleanNullish(s.instructorName),
+      dayOfWeek: cleanNullish(s.dayOfWeek),
+      date: cleanNullish(s.date),
+      time: cleanNullish(s.time),
+      durationMinutes: cleanNullish(s.durationMinutes),
+    })),
+  });
+});
+
 admin.post("/class-sessions", async (c) => {
   const body = await c.req.json<{
     classTypeId: number;

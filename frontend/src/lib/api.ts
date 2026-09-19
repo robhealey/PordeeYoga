@@ -48,6 +48,7 @@ export const api = {
 
   listClasses: () => request<{ sessions: ClassSession[] }>("/classes"),
   getClass: (id: number) => request<{ session: ClassSession }>(`/classes/${id}`),
+  classAttendees: (id: number) => request<{ attendees: string[] }>(`/classes/${id}/attendees`),
 
   createBooking: (classSessionId: number, memberPackageId: number) =>
     request<{ booking: { id: number } }>("/bookings", {

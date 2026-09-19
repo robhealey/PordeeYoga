@@ -40,6 +40,7 @@ export interface SessionRow {
   opened_manually: number;
   cancellation_reason: string | null;
   class_name: string;
+  class_capacity: number;
   instructor_name: string | null;
   booked_count: number;
 }
@@ -139,6 +140,15 @@ export interface HolidayRow {
   type: "public" | "special";
 }
 
+export interface ParsedScheduleSession {
+  className: string;
+  instructorName: string | null;
+  dayOfWeek: string | null;
+  date: string | null;
+  time: string | null;
+  durationMinutes: number | null;
+}
+
 export interface WaitlistRow {
   id: number;
   class_session_id: number;
@@ -186,6 +196,11 @@ export const adminApi = {
     request<{ session: SessionRow }>(`/class-sessions/${id}/open-manually`, { method: "POST" }),
   sessionBookings: (id: number) => request<{ bookings: SessionBookingRow[] }>(`/class-sessions/${id}/bookings`),
   sessionWaitlist: (id: number) => request<{ entries: WaitlistRow[] }>(`/class-sessions/${id}/waitlist`),
+  parseScheduleImage: (imageBase64: string) =>
+    request<{ instructors: string[]; sessions: ParsedScheduleSession[] }>("/schedule-import/parse", {
+      method: "POST",
+      body: JSON.stringify({ imageBase64 }),
+    }),
 
   markNoShow: (bookingId: number) => request<{ creditRefunded: boolean }>(`/bookings/${bookingId}/no-show`, { method: "POST" }),
   markAttended: (bookingId: number) => request<{ ok: true }>(`/bookings/${bookingId}/attended`, { method: "POST" }),

@@ -2,22 +2,25 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type ClassSession, type MemberPackage } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
-
-function remaining(mp: MemberPackage): string {
-  if (mp.credits_total == null) return "Unlimited";
-  return `${mp.credits_total - mp.credits_used} left`;
-}
+import { useLanguage } from "../lib/i18n";
 
 export function ClassDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user, loginWithLine } = useAuth();
+  const { t } = useLanguage();
   const [session, setSession] = useState<ClassSession | null>(null);
   const [packages, setPackages] = useState<MemberPackage[] | null>(null);
   const [selectedPackageId, setSelectedPackageId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [waitlisted, setWaitlisted] = useState(false);
+  const [attendees, setAttendees] = useState<string[] | null>(null);
+
+  function remaining(mp: MemberPackage): string {
+    if (mp.credits_total == null) return t("classDetail.unlimited");
+    return t("classDetail.creditsLeft", { n: mp.credits_total - mp.credits_used });
+  }
 
   useEffect(() => {
     if (!id) return;
@@ -34,6 +37,11 @@ export function ClassDetail() {
       if (r.memberPackages.length > 0) setSelectedPackageId(r.memberPackages[0].id);
     });
   }, [user]);
+
+  useEffect(() => {
+    if (!id || !user) return;
+    api.classAttendees(Number(id)).then((r) => setAttendees(r.attendees));
+  }, [id, user]);
 
   async function handleBook() {
     if (!session) return;
@@ -73,7 +81,7 @@ export function ClassDetail() {
   }
 
   if (error && !session) return <p className="text-red-600">{error}</p>;
-  if (!session) return <p className="text-sage-500">Loading…</p>;
+  if (!session) return <p className="text-sage-500">{t("classDetail.loading")}</p>;
 
   const isFull = session.spots_left <= 0;
   const isCancelled = session.status === "cancelled_by_studio";
@@ -84,31 +92,33 @@ export function ClassDetail() {
       <p className="text-sage-500 mt-1">
         {new Date(session.start_time).toLocaleString("en-US", { dateStyle: "full", timeStyle: "short" })}
       </p>
-      {session.instructor_name && <p className="text-sage-500">with {session.instructor_name}</p>}
-      <p className="mt-2 text-sage-700">{session.duration_minutes} minutes</p>
+      {session.instructor_name && <p className="text-sage-500">{t("classDetail.with", { name: session.instructor_name })}</p>}
+      <p className="mt-2 text-sage-700">{t("classDetail.minutes", { n: session.duration_minutes })}</p>
       <p className="mt-1 text-sm text-sage-400">
         {isCancelled
-          ? `Cancelled by the studio${session.cancellation_reason ? `: ${session.cancellation_reason}` : ""}`
+          ? session.cancellation_reason
+            ? t("classDetail.cancelledReason", { reason: session.cancellation_reason })
+            : t("classDetail.cancelled")
           : isFull
-            ? "This class is full"
-            : `${session.spots_left} spots left`}
+            ? t("classDetail.full")
+            : t("classDetail.spotsLeft", { n: session.spots_left })}
       </p>
 
       {error && <p className="mt-3 text-red-600 text-sm">{error}</p>}
 
       {!isCancelled && user && packages && packages.length === 0 && (
         <div className="mt-4 bg-amber-50 border border-amber-200 rounded-md p-3 text-sm">
-          You don't have a package with credits available.{" "}
+          {t("classDetail.noPackage")}{" "}
           <Link to="/packages" className="underline text-sage-700">
-            Buy a package
+            {t("classDetail.buyPackage")}
           </Link>{" "}
-          to book this class.
+          {t("classDetail.toBook")}
         </div>
       )}
 
       {!isCancelled && user && packages && packages.length > 0 && (
         <div className="mt-4">
-          <label className="text-sm text-sage-600">Use package</label>
+          <label className="text-sm text-sage-600">{t("classDetail.usePackage")}</label>
           <select
             value={selectedPackageId ?? ""}
             onChange={(e) => setSelectedPackageId(Number(e.target.value))}
@@ -117,7 +127,7 @@ export function ClassDetail() {
             {packages.map((mp) => (
               <option key={mp.id} value={mp.id}>
                 {mp.package_name} — {remaining(mp)}
-                {mp.expires_at ? ` — exp. ${new Date(mp.expires_at).toLocaleDateString()}` : ""}
+                {mp.expires_at ? ` — ${t("classDetail.expires", { date: new Date(mp.expires_at).toLocaleDateString() })}` : ""}
               </option>
             ))}
           </select>
@@ -130,7 +140,7 @@ export function ClassDetail() {
           disabled={busy || (!!user && (!packages || packages.length === 0))}
           className="mt-4 bg-sage-500 disabled:bg-sage-200 text-white px-4 py-2 rounded-md hover:bg-sage-600"
         >
-          {busy ? "Booking…" : user ? "Book this class" : "Log in with LINE to book"}
+          {busy ? t("classDetail.booking") : user ? t("classDetail.book") : t("classDetail.loginToBook")}
         </button>
       )}
 
@@ -140,9 +150,31 @@ export function ClassDetail() {
           disabled={busy || waitlisted}
           className="mt-4 bg-sage-500 disabled:bg-sage-200 text-white px-4 py-2 rounded-md hover:bg-sage-600"
         >
-          {waitlisted ? "You're on the waitlist" : busy ? "Joining…" : user ? "Join the waitlist" : "Log in with LINE to join the waitlist"}
+          {waitlisted
+            ? t("classDetail.onWaitlist")
+            : busy
+              ? t("classDetail.joining")
+              : user
+                ? t("classDetail.joinWaitlist")
+                : t("classDetail.loginToWaitlist")}
         </button>
       )}
+
+      <div className="mt-8 border-t border-sage-100 pt-4">
+        <h2 className="font-medium text-sage-800 mb-2">{t("classDetail.whosComing")}</h2>
+        {!user && <p className="text-sm text-sage-400">{t("classDetail.loginToSeeAttendees")}</p>}
+        {user && attendees == null && <p className="text-sm text-sage-400">{t("classDetail.loading")}</p>}
+        {user && attendees != null && attendees.length === 0 && (
+          <p className="text-sm text-sage-400">{t("classDetail.noAttendees")}</p>
+        )}
+        {user && attendees != null && attendees.length > 0 && (
+          <ul className="space-y-1 text-sm text-sage-700">
+            {attendees.map((name, i) => (
+              <li key={i}>{name}</li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }
