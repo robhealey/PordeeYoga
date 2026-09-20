@@ -263,7 +263,8 @@ export async function countActiveBookingsForUserOnDate(
   env: Env,
   userId: number,
   classStartTimeIso: string,
-  excludeBookingId?: number
+  excludeBookingId?: number,
+  memberPackageId?: number
 ): Promise<number> {
   const target = new Date(classStartTimeIso);
   const windowStart = new Date(target.getTime() - 36 * 60 * 60 * 1000).toISOString();
@@ -274,9 +275,10 @@ export async function countActiveBookingsForUserOnDate(
     `SELECT b.id, cs.start_time
      FROM bookings b JOIN class_sessions cs ON cs.id = b.class_session_id
      WHERE b.user_id = ? AND b.status = 'confirmed'
+       AND (? IS NULL OR b.member_package_id = ?)
        AND cs.start_time BETWEEN ? AND ?`
   )
-    .bind(userId, windowStart, windowEnd)
+    .bind(userId, memberPackageId ?? null, memberPackageId ?? null, windowStart, windowEnd)
     .all<{ id: number; start_time: string }>();
 
   return results.filter(

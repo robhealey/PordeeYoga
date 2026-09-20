@@ -74,7 +74,7 @@ const BOOK_SQL = `
   INSERT INTO bookings (user_id, class_session_id, member_package_id, credit_value_cents, status)
   SELECT ?, ?, ?, ?, 'confirmed'
   WHERE NOT EXISTS (
-    SELECT 1 FROM bookings WHERE user_id = ? AND class_session_id = ? AND status = 'confirmed'
+    SELECT 1 FROM bookings WHERE user_id = ? AND class_session_id = ? AND member_package_id = ? AND status = 'confirmed'
   ) AND (
     SELECT COUNT(*) FROM bookings WHERE class_session_id = ? AND status = 'confirmed'
   ) < (
@@ -128,7 +128,7 @@ export async function createBooking(
   }
 
   if (mp.package_max_bookings_per_day != null) {
-    const activeToday = await countActiveBookingsForUserOnDate(env, params.userId, session.start_time);
+    const activeToday = await countActiveBookingsForUserOnDate(env, params.userId, session.start_time, undefined, mp.id);
     if (activeToday >= mp.package_max_bookings_per_day) {
       return {
         ok: false,
@@ -148,25 +148,24 @@ export async function createBooking(
       creditValueCents,
       params.userId,
       params.classSessionId,
+      mp.id,
       params.classSessionId,
       params.classSessionId
     )
     .run();
   if (insert.meta.changes === 0) {
+    // The same person may book a class again, but only from a different package.
     const already = await env.DB.prepare(
-      "SELECT 1 FROM bookings WHERE user_id = ? AND class_session_id = ? AND status = 'confirmed'"
+      "SELECT 1 FROM bookings WHERE user_id = ? AND class_session_id = ? AND member_package_id = ? AND status = 'confirmed'"
     )
-      .bind(params.userId, params.classSessionId)
+      .bind(params.userId, params.classSessionId, mp.id)
       .first();
-    if (already) return { ok: false, status: 409, error: "You already have a booking for this class" };
+    if (already) {
+      return { ok: false, status: 409, error: "You've already booked this class with this package — pick a different package to book another spot" };
+    }
     return { ok: false, status: 409, error: "Class is full. Join the waitlist instead." };
   }
-  const inserted = await env.DB.prepare(
-    "SELECT id FROM bookings WHERE user_id = ? AND class_session_id = ? AND status = 'confirmed' ORDER BY id DESC LIMIT 1"
-  )
-    .bind(params.userId, params.classSessionId)
-    .first<{ id: number }>();
-  const bookingId = inserted!.id;
+  const bookingId = insert.meta.last_row_id;
 
   const deduct = await env.DB.prepare(
     `UPDATE member_packages SET credits_used = credits_used + 1

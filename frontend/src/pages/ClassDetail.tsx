@@ -15,7 +15,7 @@ export function ClassDetail() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [waitlisted, setWaitlisted] = useState(false);
-  const [attendees, setAttendees] = useState<string[] | null>(null);
+  const [attendees, setAttendees] = useState<Awaited<ReturnType<typeof api.classAttendees>>["attendees"] | null>(null);
 
   function remaining(mp: MemberPackage): string {
     if (mp.credits_total == null) return t("classDetail.unlimited");
@@ -32,11 +32,22 @@ export function ClassDetail() {
 
   useEffect(() => {
     if (!user) return;
-    api.usablePackages().then((r) => {
-      setPackages(r.memberPackages);
-      if (r.memberPackages.length > 0) setSelectedPackageId(r.memberPackages[0].id);
-    });
+    api.usablePackages().then((r) => setPackages(r.memberPackages));
   }, [user]);
+
+  // Packages this member has already used to book this class — each package can only hold one spot.
+  const bookedPackageIds = new Set(
+    (attendees ?? []).filter((a) => a.mine && a.memberPackageId != null).map((a) => a.memberPackageId as number)
+  );
+  const alreadyBooked = bookedPackageIds.size > 0;
+
+  // Keep the selection on a package that can still book this class.
+  useEffect(() => {
+    if (!packages) return;
+    if (selectedPackageId && packages.some((p) => p.id === selectedPackageId) && !bookedPackageIds.has(selectedPackageId)) return;
+    setSelectedPackageId(packages.find((p) => !bookedPackageIds.has(p.id))?.id ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [packages, attendees]);
 
   useEffect(() => {
     if (!id || !user) return;
@@ -50,6 +61,16 @@ export function ClassDetail() {
       return;
     }
     if (!selectedPackageId) return;
+    const chosen = packages?.find((p) => p.id === selectedPackageId);
+    const pkgLabel = chosen ? `${chosen.package_name}${chosen.note ? ` (${chosen.note})` : ""}` : "";
+    const when = new Date(session.start_time).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
+    const left = chosen && chosen.credits_total != null ? chosen.credits_total - chosen.credits_used - 1 : null;
+    const message =
+      (alreadyBooked
+        ? t("classDetail.confirmBookAgain", { pkg: pkgLabel })
+        : t("classDetail.confirmBook", { cls: session.class_name, when, pkg: pkgLabel })) +
+      (left != null ? `\n\n${t("classDetail.confirmCredits", { n: left })}` : "");
+    if (!window.confirm(message)) return;
     setBusy(true);
     setError(null);
     try {
@@ -123,13 +144,18 @@ export function ClassDetail() {
             {packages.map((mp) => (
               <label
                 key={mp.id}
-                className={`flex items-start gap-3 border rounded-md px-3 py-2 cursor-pointer ${
-                  selectedPackageId === mp.id ? "border-sage-500 bg-sage-50" : "border-sage-200 bg-white"
+                className={`flex items-start gap-3 border rounded-md px-3 py-2 ${
+                  bookedPackageIds.has(mp.id)
+                    ? "border-sage-100 bg-sage-50 opacity-60 cursor-not-allowed"
+                    : selectedPackageId === mp.id
+                      ? "border-sage-500 bg-sage-50 cursor-pointer"
+                      : "border-sage-200 bg-white cursor-pointer"
                 }`}
               >
                 <input
                   type="radio"
                   name="member-package"
+                  disabled={bookedPackageIds.has(mp.id)}
                   checked={selectedPackageId === mp.id}
                   onChange={() => setSelectedPackageId(mp.id)}
                   className="mt-1"
@@ -140,6 +166,7 @@ export function ClassDetail() {
                     {mp.note && <span className="font-normal text-sage-600"> · {mp.note}</span>}
                   </span>
                   <span className="block text-sm text-sage-500">
+                    {bookedPackageIds.has(mp.id) && <span className="text-sage-600">{t("classDetail.alreadyBookedWith")} · </span>}
                     {remaining(mp)}
                     {mp.expires_at ? ` — ${t("classDetail.expires", { date: new Date(mp.expires_at).toLocaleDateString() })}` : ""}
                   </span>
@@ -153,7 +180,7 @@ export function ClassDetail() {
       {!isCancelled && !isFull && (
         <button
           onClick={() => void handleBook()}
-          disabled={busy || (!!user && (!packages || packages.length === 0))}
+          disabled={busy || (!!user && (!packages || packages.length === 0 || selectedPackageId == null))}
           className="mt-4 bg-sage-500 disabled:bg-sage-200 text-white px-4 py-2 rounded-md hover:bg-sage-600"
         >
           {busy ? t("classDetail.booking") : user ? t("classDetail.book") : t("classDetail.loginToBook")}
@@ -185,8 +212,12 @@ export function ClassDetail() {
         )}
         {user && attendees != null && attendees.length > 0 && (
           <ul className="space-y-1 text-sm text-sage-700">
-            {attendees.map((name, i) => (
-              <li key={i}>{name}</li>
+            {attendees.map((a, i) => (
+              <li key={i}>
+                {a.name}
+                {a.mine && <span className="text-sage-400"> ({t("classDetail.you")})</span>}
+                {a.note && <span className="text-sage-500 italic"> · {a.note}</span>}
+              </li>
             ))}
           </ul>
         )}
