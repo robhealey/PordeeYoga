@@ -20,7 +20,7 @@ export function Layout() {
       <header className="border-b border-sage-200 bg-white">
         <div className="max-w-4xl mx-auto flex items-center justify-between px-4 py-3">
           <Link to="/">
-            <img src="/PordeeLogo2022onWhite.jpg" alt="Pordee Yoga" className="h-9 w-9 rounded-full object-cover" />
+            <img src="/logo.png" alt="Pordee Yoga" className="h-9 w-9 rounded-full object-cover" />
           </Link>
           <div className="flex items-center gap-3 text-sm">
             <button
