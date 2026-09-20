@@ -256,6 +256,52 @@ function SessionsTab() {
   const [roster, setRoster] = useState<SessionBookingRow[]>([]);
   const [cancelTargetId, setCancelTargetId] = useState<number | null>(null);
   const [waitlist, setWaitlist] = useState<WaitlistRow[]>([]);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [instructorFilter, setInstructorFilter] = useState("");
+  const [range, setRange] = useState<"upcoming" | "today" | "week" | "past" | "all">("upcoming");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+
+  const todayKey = tzDateKey(new Date().toISOString());
+  const weekStartKey = toDateKey(mondayOfWeek(todayKey));
+  const weekEndKey = toDateKey(addDays(mondayOfWeek(todayKey), 6));
+  const q = search.trim().toLowerCase();
+  const filtered = items
+    .filter((s) => {
+      const day = tzDateKey(s.start_time);
+      if (dateFrom || dateTo) {
+        if (dateFrom && day < dateFrom) return false;
+        if (dateTo && day > dateTo) return false;
+      } else if (range === "upcoming" && new Date(s.start_time).getTime() < Date.now()) return false;
+      else if (range === "past" && new Date(s.start_time).getTime() >= Date.now()) return false;
+      else if (range === "today" && day !== todayKey) return false;
+      else if (range === "week" && (day < weekStartKey || day > weekEndKey)) return false;
+      if (statusFilter && s.status !== statusFilter) return false;
+      if (instructorFilter && String(s.instructor_id ?? "") !== instructorFilter) return false;
+      if (q && !`${s.class_name} ${s.instructor_name ?? ""}`.toLowerCase().includes(q)) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const d = new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
+      return range === "past" ? -d : d;
+    });
+  const filtersActive = !!(q || statusFilter || instructorFilter || dateFrom || dateTo || range !== "upcoming");
+
+  async function resetData() {
+    if (!window.confirm("Delete ALL class sessions, bookings and waitlist entries? Users and packages are kept, and package credits are restored. This cannot be undone.")) return;
+    const typed = window.prompt('Type DELETE to confirm');
+    if (typed !== "DELETE") return;
+    try {
+      const r = await adminApi.resetScheduleData();
+      setExpanded(null);
+      setError(null);
+      load();
+      window.alert(`Cleared ${r.deletedSessions} sessions and ${r.deletedBookings} bookings.`);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
 
   function load() {
     adminApi.listSessions().then((r) => setItems(r.sessions));
@@ -366,6 +412,60 @@ function SessionsTab() {
       <ScheduleImportPanel classTypes={classTypes} instructors={instructors} onImported={load} />
 
       {error && <p className="text-red-600 mb-2">{error}</p>}
+
+      <div className="mb-3 bg-white p-3 rounded-lg border border-sage-200 space-y-2">
+        <div className="flex flex-wrap gap-2 items-center">
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search class or instructor…"
+            className="border border-sage-200 rounded-md px-2 py-1 flex-1 min-w-[12rem]"
+          />
+          <select value={instructorFilter} onChange={(e) => setInstructorFilter(e.target.value)} className="border border-sage-200 rounded-md px-2 py-1">
+            <option value="">All instructors</option>
+            {instructors.map((i) => (
+              <option key={i.id} value={i.id}>{i.name}</option>
+            ))}
+          </select>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="border border-sage-200 rounded-md px-2 py-1">
+            <option value="">All statuses</option>
+            {["scheduled", "confirmed", "full", "completed", "cancelled_by_studio"].map((st) => (
+              <option key={st} value={st}>{st}</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex flex-wrap gap-2 items-center text-sm">
+          {(["upcoming", "today", "week", "past", "all"] as const).map((r) => (
+            <button
+              key={r}
+              onClick={() => { setRange(r); setDateFrom(""); setDateTo(""); }}
+              className={`px-2.5 py-1 rounded-full border ${!dateFrom && !dateTo && range === r ? "bg-sage-500 text-white border-sage-500" : "border-sage-200 text-sage-600"}`}
+            >
+              {r === "week" ? "This week" : r[0].toUpperCase() + r.slice(1)}
+            </button>
+          ))}
+          <span className="text-sage-400 ml-2">From</span>
+          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="border border-sage-200 rounded-md px-2 py-0.5" />
+          <span className="text-sage-400">to</span>
+          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="border border-sage-200 rounded-md px-2 py-0.5" />
+          {filtersActive && (
+            <button
+              onClick={() => { setSearch(""); setStatusFilter(""); setInstructorFilter(""); setRange("upcoming"); setDateFrom(""); setDateTo(""); }}
+              className="text-sage-600 underline"
+            >
+              Clear filters
+            </button>
+          )}
+          <span className="text-sage-400 ml-auto">{filtered.length} of {items.length} sessions</span>
+        </div>
+        <div className="flex justify-end">
+          <button onClick={() => void resetData()} className="text-xs text-red-500 hover:underline">
+            Clear all sessions &amp; bookings (testing)
+          </button>
+        </div>
+      </div>
+
       <div className="overflow-x-auto">
         <table className="w-full text-sm bg-white rounded-lg overflow-hidden border border-sage-200">
           <thead className="bg-sage-100 text-left">
@@ -379,7 +479,10 @@ function SessionsTab() {
             </tr>
           </thead>
           <tbody>
-            {items.map((s) => (
+            {filtered.length === 0 && (
+              <tr><td colSpan={6} className="p-4 text-center text-sage-400">No sessions match these filters.</td></tr>
+            )}
+            {filtered.map((s) => (
               <Fragment key={s.id}>
                 <tr className="border-t border-sage-100 cursor-pointer" onClick={() => void toggleExpand(s.id)}>
                   <td className="p-2">{s.class_name}</td>
@@ -624,18 +727,38 @@ function ScheduleImportPanel({
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [modelUsed, setModelUsed] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [weekStart, setWeekStart] = useState(nextMonday());
   const [creating, setCreating] = useState(false);
 
   function matchClassTypeId(name: string): string {
-    const match = classTypes.find((ct) => ct.name.toLowerCase() === name.toLowerCase());
-    return match ? String(match.id) : "";
+    const norm = (v: string) =>
+      v.toLowerCase().replace(/&/g, " and ").replace(/\b(class|yoga)\b/g, " ").replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+    const target = norm(name);
+    if (!target) return "";
+    const compact = (v: string) => v.replace(/\s/g, "");
+    const scored = classTypes.map((ct) => {
+      const n = norm(ct.name);
+      let score = 0;
+      if (n === target || compact(n) === compact(target)) score = 100;
+      else if (n && (compact(n).includes(compact(target)) || compact(target).includes(compact(n)))) score = 60;
+      else {
+        const a = new Set(n.split(" "));
+        const b = target.split(" ");
+        const shared = b.filter((w) => a.has(w)).length;
+        score = (shared / Math.max(a.size, b.length)) * 50;
+      }
+      return { ct, score };
+    });
+    const best = scored.sort((x, y) => y.score - x.score)[0];
+    return best && best.score >= 25 ? String(best.ct.id) : "";
   }
 
   async function handleFile(file: File) {
     setBusy(true);
+    setModelUsed(null);
     setError(null);
     setRows([]);
     try {
@@ -645,7 +768,8 @@ function ScheduleImportPanel({
         reader.onerror = reject;
         reader.readAsDataURL(file);
       });
-      const { sessions } = await adminApi.parseScheduleImage(imageBase64);
+      const { sessions, model } = await adminApi.parseScheduleImage(imageBase64);
+      setModelUsed(model ?? null);
       setRows(
         sessions.map((s) => ({
           ...s,
@@ -691,13 +815,19 @@ function ScheduleImportPanel({
           }
         }
 
-        const dateStr = row.date ?? (() => {
+        const validDate = row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) && !isNaN(new Date(`${row.date}T00:00:00`).getTime());
+        const dateStr = validDate ? (row.date as string) : (() => {
           const base = new Date(`${weekStart}T00:00:00`);
-          const offset = row.dayOfWeek ? DAY_INDEX[row.dayOfWeek.toLowerCase()] ?? 0 : 0;
+          const dayKey = (row.dayOfWeek ?? "").toLowerCase().match(/[a-z]+/)?.[0] ?? "";
+          const offset = DAY_INDEX[dayKey] ?? 0;
           base.setDate(base.getDate() + offset);
-          return base.toISOString().slice(0, 10);
+          const pad = (n: number) => String(n).padStart(2, "0");
+          return `${base.getFullYear()}-${pad(base.getMonth() + 1)}-${pad(base.getDate())}`;
         })();
-        const start = new Date(`${dateStr}T${row.time}:00`);
+        const timeMatch = (row.time ?? "").match(/(\d{1,2})\s*[.:]\s*(\d{2})/);
+        const timeStr = timeMatch ? `${timeMatch[1].padStart(2, "0")}:${timeMatch[2]}` : "09:00";
+        const start = new Date(`${dateStr}T${timeStr}:00`);
+        if (isNaN(start.getTime())) throw new Error(`Invalid date/time for "${row.className}" (${dateStr} ${row.time})`);
         const end = new Date(start.getTime() + row.durationMinutes * 60000);
 
         await adminApi.createSession({
@@ -738,6 +868,7 @@ function ScheduleImportPanel({
             className="text-sm"
           />
           {busy && <p className="text-sm text-sage-500">Reading image…</p>}
+          {modelUsed && !busy && <p className="text-xs text-sage-400">Read by: {modelUsed}</p>}
           {error && <p className="text-sm text-red-600">{error}</p>}
 
           {rows.length > 0 && (
@@ -844,6 +975,95 @@ function MembersTab() {
   const [form, setForm] = useState({ displayName: "", phone: "" });
   const [packages, setPackages] = useState<PackageCatalogRow[]>([]);
   const [grantPackageId, setGrantPackageId] = useState("");
+  const [grantNote, setGrantNote] = useState("");
+  const [editingMember, setEditingMember] = useState(false);
+  const [memberForm, setMemberForm] = useState({ displayName: "", phone: "", dateOfBirth: "", notes: "" });
+  const [editingPkgId, setEditingPkgId] = useState<number | null>(null);
+  const [pkgForm, setPkgForm] = useState({ total: "", used: "", expires: "", status: "active" });
+  const [memberError, setMemberError] = useState<string | null>(null);
+
+  async function saveMember() {
+    if (!detail) return;
+    setMemberError(null);
+    try {
+      await adminApi.updateMember(detail.member.id, {
+        displayName: memberForm.displayName.trim(),
+        phone: memberForm.phone.trim() || null,
+        dateOfBirth: memberForm.dateOfBirth || null,
+        notes: memberForm.notes.trim() || null,
+      });
+      setEditingMember(false);
+      setDetail(await adminApi.getMember(detail.member.id));
+      load();
+    } catch (e) {
+      setMemberError(String(e));
+    }
+  }
+
+  function startEditPackage(mp: MemberPackageRow) {
+    setEditingPkgId(mp.id);
+    setPkgForm({
+      total: mp.credits_total == null ? "" : String(mp.credits_total),
+      used: String(mp.credits_used),
+      expires: mp.expires_at ? mp.expires_at.slice(0, 10) : "",
+      status: mp.status === "expired" || mp.status === "cancelled" ? mp.status : "active",
+    });
+  }
+
+  async function savePackage(mp: MemberPackageRow) {
+    if (!detail) return;
+    setMemberError(null);
+    try {
+      await adminApi.updateMemberPackage(mp.id, {
+        creditsTotal: pkgForm.total.trim() === "" ? null : Number(pkgForm.total),
+        creditsUsed: Number(pkgForm.used || 0),
+        expiresAt: pkgForm.expires ? new Date(`${pkgForm.expires}T23:59:59`).toISOString() : null,
+        status: pkgForm.status,
+      });
+      setEditingPkgId(null);
+      setDetail(await adminApi.getMember(detail.member.id));
+    } catch (e) {
+      setMemberError(String(e));
+    }
+  }
+
+  async function removePackage(mp: MemberPackageRow) {
+    if (!detail) return;
+    if (!window.confirm(`Remove "${mp.package_name}" from ${detail.member.display_name}?`)) return;
+    setMemberError(null);
+    try {
+      const r = await adminApi.deleteMemberPackage(mp.id);
+      if (r.cancelled) window.alert("This package has bookings or payments linked to it, so it was marked cancelled instead of deleted. The member can no longer use it.");
+      setDetail(await adminApi.getMember(detail.member.id));
+    } catch (e) {
+      setMemberError(String(e));
+    }
+  }
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergeSearch, setMergeSearch] = useState("");
+  const [mergeResults, setMergeResults] = useState<MemberRow[]>([]);
+  const [mergeError, setMergeError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!mergeOpen) return;
+    adminApi.listMembers(mergeSearch.trim() || undefined).then((r) => setMergeResults(r.members.filter((m) => m.line_user_id)));
+  }, [mergeOpen, mergeSearch]);
+
+  async function mergeInto(target: MemberRow) {
+    if (!detail) return;
+    const walkIn = detail.member;
+    if (!window.confirm(`Merge walk-in "${walkIn.display_name}" into LINE account "${target.display_name}"?\n\nTheir packages, bookings and coupons move to the LINE account and the walk-in record is deleted. This cannot be undone.`)) return;
+    setMergeError(null);
+    try {
+      await adminApi.mergeMembers(walkIn.id, target.id);
+      setMergeOpen(false);
+      setMergeSearch("");
+      load();
+      setDetail(await adminApi.getMember(target.id));
+    } catch (e) {
+      setMergeError(String(e));
+    }
+  }
 
   function load() {
     adminApi.listMembers(search || undefined).then((r) => setItems(r.members));
@@ -861,12 +1081,15 @@ function MembersTab() {
   }
 
   async function openDetail(id: number) {
+    setMergeOpen(false);
+    setMergeError(null);
     setDetail(await adminApi.getMember(id));
   }
 
   async function grant() {
     if (!detail || !grantPackageId) return;
-    await adminApi.grantPackage(detail.member.id, Number(grantPackageId));
+    await adminApi.grantPackage(detail.member.id, Number(grantPackageId), true, grantNote.trim() || undefined);
+    setGrantNote("");
     setDetail(await adminApi.getMember(detail.member.id));
   }
 
@@ -917,6 +1140,7 @@ function MembersTab() {
               >
                 <span className="font-medium">{m.display_name}</span>{" "}
                 <span className="text-sage-400 text-sm">{m.phone ?? "no phone"}</span>
+                {!m.line_user_id && <span className="ml-2 text-xs text-amber-600">walk-in</span>}
               </button>
             </li>
           ))}
@@ -927,8 +1151,50 @@ function MembersTab() {
         {!detail && <p className="text-sage-400">Select a member to view details.</p>}
         {detail && (
           <div className="bg-white border border-sage-200 rounded-lg p-4">
-            <h2 className="font-medium text-lg">{detail.member.display_name}</h2>
-            <p className="text-sm text-sage-500">{detail.member.phone ?? "No phone on file"}</p>
+            {editingMember ? (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void saveMember();
+                }}
+                className="space-y-2 mb-2"
+              >
+                <input required placeholder="Name" value={memberForm.displayName} onChange={(e) => setMemberForm({ ...memberForm, displayName: e.target.value })} className="w-full border border-sage-200 rounded-md px-2 py-1" />
+                <input placeholder="Phone" value={memberForm.phone} onChange={(e) => setMemberForm({ ...memberForm, phone: e.target.value })} className="w-full border border-sage-200 rounded-md px-2 py-1" />
+                <label className="block text-xs text-sage-500">
+                  Date of birth
+                  <input type="date" value={memberForm.dateOfBirth} onChange={(e) => setMemberForm({ ...memberForm, dateOfBirth: e.target.value })} className="block w-full border border-sage-200 rounded-md px-2 py-1 text-sm text-sage-800" />
+                </label>
+                <textarea placeholder="Notes" value={memberForm.notes} onChange={(e) => setMemberForm({ ...memberForm, notes: e.target.value })} className="w-full border border-sage-200 rounded-md px-2 py-1 text-sm" rows={2} />
+                <div className="flex gap-3 text-sm">
+                  <button className="bg-sage-500 text-white px-3 py-1 rounded-md">Save</button>
+                  <button type="button" onClick={() => setEditingMember(false)} className="text-sage-600 underline">Cancel</button>
+                </div>
+              </form>
+            ) : (
+              <>
+                <div className="flex items-start gap-2">
+                  <h2 className="font-medium text-lg flex-1">{detail.member.display_name}</h2>
+                  <button
+                    onClick={() => {
+                      setMemberForm({
+                        displayName: detail.member.display_name,
+                        phone: detail.member.phone ?? "",
+                        dateOfBirth: detail.member.date_of_birth ?? "",
+                        notes: detail.member.notes ?? "",
+                      });
+                      setEditingMember(true);
+                    }}
+                    className="text-sm text-sage-600 underline"
+                  >
+                    Edit details
+                  </button>
+                </div>
+                <p className="text-sm text-sage-500">{detail.member.phone ?? "No phone on file"}</p>
+                {detail.member.date_of_birth && <p className="text-sm text-sage-500">Born {detail.member.date_of_birth}</p>}
+                {detail.member.notes && <p className="text-sm text-sage-500 italic whitespace-pre-line">{detail.member.notes}</p>}
+              </>
+            )}
             <div className="text-sm text-sage-500 mt-1 flex items-center gap-2">
               <label htmlFor="member-role">Role:</label>
               <select
@@ -943,6 +1209,41 @@ function MembersTab() {
               </select>
             </div>
 
+            {!detail.member.line_user_id && detail.member.role === "customer" && (
+              <div className="mt-3 border border-amber-200 bg-amber-50 rounded-md p-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="text-amber-700 flex-1">Walk-in (no LINE login yet)</span>
+                  <button onClick={() => setMergeOpen((o) => !o)} className="text-sage-700 underline">
+                    {mergeOpen ? "Close" : "Merge into LINE account…"}
+                  </button>
+                </div>
+                {mergeOpen && (
+                  <div className="mt-2 space-y-1">
+                    <input
+                      placeholder="Search the person's LINE account by name or phone…"
+                      value={mergeSearch}
+                      onChange={(e) => setMergeSearch(e.target.value)}
+                      className="w-full border border-sage-200 rounded-md px-2 py-1"
+                    />
+                    {mergeError && <p className="text-red-600">{mergeError}</p>}
+                    <ul className="max-h-40 overflow-y-auto space-y-1">
+                      {mergeResults.length === 0 && <li className="text-sage-400">No LINE accounts found.</li>}
+                      {mergeResults.map((m) => (
+                        <li key={m.id}>
+                          <button
+                            onClick={() => void mergeInto(m)}
+                            className="w-full text-left bg-white border border-sage-200 rounded-md px-2 py-1 hover:border-sage-400"
+                          >
+                            {m.display_name} <span className="text-sage-400">· joined {new Date(m.created_at).toLocaleDateString()}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="mt-3 flex gap-2 items-center">
               <select
                 value={grantPackageId}
@@ -956,6 +1257,13 @@ function MembersTab() {
                   </option>
                 ))}
               </select>
+              <input
+                placeholder="Note (optional)"
+                maxLength={100}
+                value={grantNote}
+                onChange={(e) => setGrantNote(e.target.value)}
+                className="border border-sage-200 rounded-md px-2 py-1 text-sm w-36"
+              />
               <button onClick={() => void grant()} className="text-sm bg-sage-500 text-white px-2 py-1 rounded-md">
                 Grant (mark paid)
               </button>
@@ -967,13 +1275,73 @@ function MembersTab() {
             <h3 className="font-medium mt-4">Packages</h3>
             <ul className="text-sm space-y-1">
               {detail.memberPackages.map((mp) => (
-                <li key={mp.id}>
-                  {mp.package_name} — {mp.status}
-                  {mp.credits_total != null && ` (${mp.credits_total - mp.credits_used}/${mp.credits_total})`}
-                  {mp.expiry_extension_flagged_at && <span className="text-amber-600"> ⚠ extension flagged</span>}
+                <li key={mp.id} className="border border-sage-100 rounded-md p-2">
+                  <div className="flex flex-wrap items-center gap-x-2">
+                    <span className="font-medium">{mp.package_name}</span>
+                    {mp.note && <span className="italic text-sage-600">“{mp.note}”</span>}
+                    <span className="text-sage-500">— {mp.status}</span>
+                    {mp.credits_total != null ? (
+                      <span>({mp.credits_total - mp.credits_used}/{mp.credits_total})</span>
+                    ) : (
+                      <span>(unlimited)</span>
+                    )}
+                    {mp.expires_at && <span className="text-sage-400">exp. {new Date(mp.expires_at).toLocaleDateString()}</span>}
+                    {mp.expiry_extension_flagged_at && <span className="text-amber-600"> ⚠ extension flagged</span>}
+                    <span className="ml-auto space-x-3">
+                      <button onClick={() => (editingPkgId === mp.id ? setEditingPkgId(null) : startEditPackage(mp))} className="text-sage-600 underline">
+                        {editingPkgId === mp.id ? "Close" : "Edit"}
+                      </button>
+                      <button
+                        onClick={async () => {
+                          const v = window.prompt("Package note", mp.note ?? "");
+                          if (v === null) return;
+                          await adminApi.updatePackageNote(mp.id, v);
+                          setDetail(await adminApi.getMember(detail.member.id));
+                        }}
+                        className="text-sage-600 underline"
+                      >
+                        Note
+                      </button>
+                      <button onClick={() => void removePackage(mp)} className="text-red-500 underline">
+                        Remove
+                      </button>
+                    </span>
+                  </div>
+                  {editingPkgId === mp.id && (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void savePackage(mp);
+                      }}
+                      className="mt-2 flex flex-wrap gap-2 items-end bg-sage-50 rounded-md p-2"
+                    >
+                      <label className="text-xs text-sage-500">
+                        Total classes
+                        <input type="number" min={0} placeholder="unlimited" value={pkgForm.total} onChange={(e) => setPkgForm({ ...pkgForm, total: e.target.value })} className="block w-24 border border-sage-200 rounded-md px-2 py-1 text-sm text-sage-800" />
+                      </label>
+                      <label className="text-xs text-sage-500">
+                        Classes used
+                        <input type="number" min={0} value={pkgForm.used} onChange={(e) => setPkgForm({ ...pkgForm, used: e.target.value })} className="block w-24 border border-sage-200 rounded-md px-2 py-1 text-sm text-sage-800" />
+                      </label>
+                      <label className="text-xs text-sage-500">
+                        Expires
+                        <input type="date" value={pkgForm.expires} onChange={(e) => setPkgForm({ ...pkgForm, expires: e.target.value })} className="block border border-sage-200 rounded-md px-2 py-1 text-sm text-sage-800" />
+                      </label>
+                      <label className="text-xs text-sage-500">
+                        Status
+                        <select value={pkgForm.status} onChange={(e) => setPkgForm({ ...pkgForm, status: e.target.value })} className="block border border-sage-200 rounded-md px-2 py-1 text-sm text-sage-800">
+                          <option value="active">active</option>
+                          <option value="expired">expired</option>
+                          <option value="cancelled">cancelled</option>
+                        </select>
+                      </label>
+                      <button className="bg-sage-500 text-white px-3 py-1 rounded-md text-sm">Save</button>
+                    </form>
+                  )}
                 </li>
               ))}
             </ul>
+            {memberError && <p className="text-red-600 text-sm mt-1">{memberError}</p>}
 
             <h3 className="font-medium mt-4">Recent bookings</h3>
             <ul className="text-sm space-y-1">

@@ -119,18 +119,34 @@ export function ClassDetail() {
       {!isCancelled && user && packages && packages.length > 0 && (
         <div className="mt-4">
           <label className="text-sm text-sage-600">{t("classDetail.usePackage")}</label>
-          <select
-            value={selectedPackageId ?? ""}
-            onChange={(e) => setSelectedPackageId(Number(e.target.value))}
-            className="mt-1 w-full border border-sage-200 rounded-md px-3 py-2"
-          >
+          <div className="mt-1 space-y-2">
             {packages.map((mp) => (
-              <option key={mp.id} value={mp.id}>
-                {mp.package_name} — {remaining(mp)}
-                {mp.expires_at ? ` — ${t("classDetail.expires", { date: new Date(mp.expires_at).toLocaleDateString() })}` : ""}
-              </option>
+              <label
+                key={mp.id}
+                className={`flex items-start gap-3 border rounded-md px-3 py-2 cursor-pointer ${
+                  selectedPackageId === mp.id ? "border-sage-500 bg-sage-50" : "border-sage-200 bg-white"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="member-package"
+                  checked={selectedPackageId === mp.id}
+                  onChange={() => setSelectedPackageId(mp.id)}
+                  className="mt-1"
+                />
+                <span className="flex-1">
+                  <span className="block font-medium text-sage-800">
+                    {mp.package_name}
+                    {mp.note && <span className="font-normal text-sage-600"> · {mp.note}</span>}
+                  </span>
+                  <span className="block text-sm text-sage-500">
+                    {remaining(mp)}
+                    {mp.expires_at ? ` — ${t("classDetail.expires", { date: new Date(mp.expires_at).toLocaleDateString() })}` : ""}
+                  </span>
+                </span>
+              </label>
             ))}
-          </select>
+          </div>
         </div>
       )}
 

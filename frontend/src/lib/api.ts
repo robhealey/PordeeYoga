@@ -86,7 +86,13 @@ export const api = {
     trialFullName?: string;
     trialPhone?: string;
     renewOldMemberPackageId?: number;
+    note?: string;
   }) => request<{ memberPackage: MemberPackage }>("/packages/purchase", { method: "POST", body: JSON.stringify(body) }),
+  updatePackageNote: (id: number, note: string) =>
+    request<{ memberPackage: { id: number; note: string | null } }>(`/packages/${id}/note`, {
+      method: "PATCH",
+      body: JSON.stringify({ note }),
+    }),
   activatePackage: (id: number) =>
     request<{ combined: boolean }>(`/packages/${id}/activate`, { method: "POST" }),
   requestExtendRenewal: (id: number) =>
@@ -188,6 +194,19 @@ export interface MemberPackage {
   studio_cancelled_class_count: number;
   expiry_extension_flagged_at: string | null;
   renewal_option_used: "combine" | "extend" | null;
+  note?: string | null;
+  combined_from_member_package_id?: number | null;
+  combine_activate_by?: string | null;
+  renewal?: {
+    expired: boolean;
+    payBy: string;
+    activateBy: string;
+    extendFeeCents: number;
+    extendMonths: number;
+    newExpiresAt: string;
+    remainingCredits: number | null;
+    canCombine: boolean;
+  } | null;
   package_name: string;
   package_shared?: number;
   package_eligible_class_type_ids?: string | null;

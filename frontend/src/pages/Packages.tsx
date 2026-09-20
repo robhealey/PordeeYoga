@@ -30,6 +30,60 @@ export function Packages() {
   const [trialName, setTrialName] = useState("");
   const [trialPhone, setTrialPhone] = useState("");
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [notes, setNotes] = useState<Record<number, string>>({});
+  const [renewFor, setRenewFor] = useState<MemberPackage | null>(null);
+  const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+
+  async function saveNote(mp: MemberPackage) {
+    try {
+      await api.updatePackageNote(mp.id, noteDraft);
+      setEditingNoteId(null);
+      loadMine();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  function renderNote(mp: MemberPackage) {
+    if (editingNoteId === mp.id) {
+      return (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void saveNote(mp);
+          }}
+          className="flex gap-2 mt-1"
+        >
+          <input
+            autoFocus
+            maxLength={100}
+            value={noteDraft}
+            onChange={(e) => setNoteDraft(e.target.value)}
+            placeholder={t("packages.notePlaceholder")}
+            className="flex-1 border border-sage-200 rounded-md px-2 py-1 text-sm"
+          />
+          <button type="submit" className="text-sm text-sage-700 underline">
+            {t("packages.saveNote")}
+          </button>
+        </form>
+      );
+    }
+    return (
+      <p className="text-sm text-sage-600 mt-0.5">
+        {mp.note && <span className="italic">“{mp.note}” </span>}
+        <button
+          onClick={() => {
+            setEditingNoteId(mp.id);
+            setNoteDraft(mp.note ?? "");
+          }}
+          className="text-xs text-sage-500 underline"
+        >
+          {mp.note ? t("packages.editNote") : t("packages.addNote")}
+        </button>
+      </p>
+    );
+  }
 
   const statusLabel: Record<string, string> = {
     pending_payment: t("packageStatus.pending_payment"),
@@ -65,7 +119,7 @@ export function Packages() {
   }, []);
   useEffect(loadMine, [user]);
 
-  async function purchase(pkg: PackageCatalogItem, renewOldMemberPackageId?: number) {
+  async function purchase(pkg: PackageCatalogItem, renewOldMemberPackageId: number | undefined = renewFor?.id) {
     if (!user) {
       await loginWithLine();
       return;
@@ -78,7 +132,9 @@ export function Packages() {
         trialFullName: trialFor ? trialName : undefined,
         trialPhone: trialFor ? trialPhone : undefined,
         renewOldMemberPackageId,
+        note: notes[pkg.id]?.trim() || undefined,
       });
+      setRenewFor(null);
       setTrialFor(null);
       navigate(`/checkout/package/${memberPackage.id}`);
     } catch (e) {
@@ -147,6 +203,59 @@ export function Packages() {
       <h1 className="text-2xl font-semibold mb-4">{t("packages.title")}</h1>
       {error && <p className="text-red-600 mb-3">{error}</p>}
 
+      {(mine ?? [])
+        .filter((mp) => mp.renewal)
+        .map((mp) => {
+          const r = mp.renewal!;
+          const date = (iso: string) => new Date(iso).toLocaleDateString();
+          const fee = formatMoney(r.extendFeeCents, mp.currency);
+          return (
+            <section key={`renew-${mp.id}`} className="mb-6 border border-amber-300 bg-amber-50 rounded-lg p-4">
+              <h2 className="font-medium text-sage-800">
+                {t(r.expired ? "renewal.titleExpired" : "renewal.titleSoon", {
+                  name: mp.package_name,
+                  date: date(mp.expires_at!),
+                })}
+              </h2>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div className="bg-white border border-sage-200 rounded-md p-3 text-sm flex flex-col">
+                  <p className="font-medium">{t("renewal.opt1Title")}</p>
+                  <p className="text-sage-600 mt-1 flex-1">
+                    {t("renewal.opt1Body", { n: r.extendMonths, fee, date: date(r.newExpiresAt) })}
+                  </p>
+                  <button
+                    onClick={() => void extend(mp)}
+                    disabled={busyId === mp.id}
+                    className="mt-2 bg-sage-500 disabled:bg-sage-200 text-white px-3 py-1.5 rounded-md"
+                  >
+                    {t("renewal.opt1Button", { fee })}
+                  </button>
+                </div>
+                <div className="bg-white border border-sage-200 rounded-md p-3 text-sm flex flex-col">
+                  <p className="font-medium">{t("renewal.opt2Title")}</p>
+                  <p className="text-sage-600 mt-1 flex-1">
+                    {t("renewal.opt2Body", { date: date(r.activateBy), n: r.remainingCredits ?? "∞" })}
+                  </p>
+                  {r.canCombine ? (
+                    <button
+                      onClick={() => {
+                        setRenewFor(mp);
+                        document.getElementById("package-catalog")?.scrollIntoView({ behavior: "smooth" });
+                      }}
+                      className="mt-2 border border-sage-500 text-sage-700 px-3 py-1.5 rounded-md"
+                    >
+                      {t("renewal.opt2Button")}
+                    </button>
+                  ) : (
+                    <p className="mt-2 text-xs text-sage-400">{t("renewal.opt2Unavailable")}</p>
+                  )}
+                </div>
+              </div>
+              <p className="text-xs text-sage-600 mt-3">{t("renewal.payBy", { date: date(r.payBy) })}</p>
+            </section>
+          );
+        })}
+
       {primaryActive && (
         <section className="mb-8">
           <h2 className="font-medium mb-2">{t("packages.yourPackage")}</h2>
@@ -154,6 +263,7 @@ export function Packages() {
             <CheckBadge className="w-9 h-9 text-sage-500 shrink-0" />
             <div className="flex-1">
               <p className="font-medium text-sage-800">{primaryActive.package_name}</p>
+              {renderNote(primaryActive)}
               <p className="text-sm text-sage-600">
                 {primaryActive.credits_total == null
                   ? t("packages.unlimitedClasses")
@@ -165,22 +275,14 @@ export function Packages() {
                   ` · ${t("packages.expires", { date: new Date(primaryActive.expires_at).toLocaleDateString() })}`}
               </p>
             </div>
-            {!primaryActive.renewal_option_used && (
-              <button
-                onClick={() => void extend(primaryActive)}
-                disabled={busyId === primaryActive.id}
-                className="text-sm text-sage-700 underline shrink-0"
-              >
-                {t("packages.extend")}
-              </button>
-            )}
           </div>
 
           {otherActive.length > 0 && (
             <div className="mt-2 space-y-1">
               {otherActive.map((mp) => (
-                <div key={mp.id} className="flex items-center gap-2 text-sm text-sage-600 pl-1">
-                  <CheckBadge className="w-4 h-4 text-sage-400 shrink-0" />
+                <div key={mp.id} className="flex items-start gap-2 text-sm text-sage-600 pl-1">
+                  <CheckBadge className="w-4 h-4 text-sage-400 shrink-0 mt-0.5" />
+                  <div>
                   <span>{mp.package_name}</span>
                   <span className="text-sage-400">
                     ·{" "}
@@ -188,6 +290,8 @@ export function Packages() {
                       ? t("classDetail.unlimited")
                       : t("packages.classesLeft", { used: mp.credits_total - mp.credits_used, total: mp.credits_total })}
                   </span>
+                  {renderNote(mp)}
+                  </div>
                 </div>
               ))}
             </div>
@@ -202,14 +306,17 @@ export function Packages() {
             {historyMine.map((mp) => (
               <div key={mp.id} className="border border-sage-200 rounded-lg p-3 bg-white flex justify-between items-center">
                 <div>
-                  <p className="font-medium">{mp.package_name}</p>
+                  <p className="font-medium">{mp.package_name}{mp.note && <span className="font-normal text-sage-600 italic"> · “{mp.note}”</span>}</p>
                   <p className="text-sm text-sage-500">
                     {mp.credits_total == null
                       ? t("classDetail.unlimited")
                       : t("packages.classesLeft", { used: mp.credits_total - mp.credits_used, total: mp.credits_total })}
                     {mp.expires_at && ` · ${t("packages.expires", { date: new Date(mp.expires_at).toLocaleDateString() })}`}
                   </p>
-                  <p className="text-xs text-sage-400">{statusLabel[mp.status] ?? mp.status}</p>
+                  <p className="text-xs text-sage-400">
+                    {statusLabel[mp.status] ?? mp.status}
+                    {mp.combine_activate_by && ` · ${t("renewal.activateBy", { date: new Date(mp.combine_activate_by).toLocaleDateString() })}`}
+                  </p>
                 </div>
                 {mp.status === "paid_not_activated" && (
                   <button
@@ -242,11 +349,19 @@ export function Packages() {
         </section>
       )}
 
-      <section>
+      <section id="package-catalog">
         <h2 className="font-medium mb-2">{t("packages.buyAPackage")}</h2>
+        {renewFor && (
+          <p className="mb-3 text-sm bg-amber-50 border border-amber-300 rounded-md p-3">
+            {t("renewal.pickBanner", { n: renewFor.renewal?.remainingCredits ?? "∞", name: renewFor.package_name })}{" "}
+            <button onClick={() => setRenewFor(null)} className="underline text-sage-700">
+              {t("renewal.cancel")}
+            </button>
+          </p>
+        )}
         <div className="grid gap-3 sm:grid-cols-2">
           {catalog?.map((pkg) => {
-            const signedUp = activePackageIds.has(pkg.id);
+            const signedUp = !renewFor && activePackageIds.has(pkg.id);
             return (
               <div key={pkg.id} className="border border-sage-200 rounded-lg p-4 bg-white">
                 <div className="flex justify-between items-start">
@@ -292,6 +407,14 @@ export function Packages() {
                     </button>
                   </form>
                 ) : (
+                  <>
+                  <input
+                    maxLength={100}
+                    placeholder={t("packages.notePlaceholder")}
+                    value={notes[pkg.id] ?? ""}
+                    onChange={(e) => setNotes({ ...notes, [pkg.id]: e.target.value })}
+                    className="mt-3 w-full border border-sage-200 rounded-md px-2 py-1 text-sm"
+                  />
                   <button
                     onClick={() => {
                       if (pkg.one_time_per_person) {
@@ -306,6 +429,7 @@ export function Packages() {
                   >
                     {busyId === pkg.id ? t("packages.starting") : t("packages.buy")}
                   </button>
+                  </>
                 )}
               </div>
             );

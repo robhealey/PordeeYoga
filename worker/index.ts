@@ -10,6 +10,7 @@ import admin from "./routes/admin.ts";
 import webhooks from "./routes/webhooks.ts";
 import { pushLineMessage } from "./lib/line.ts";
 import { expireStaleNotifications } from "./lib/waitlist.ts";
+import { getRenewalGraceDays } from "./lib/renewals.ts";
 import type { Env } from "./env.d.ts";
 
 const app = new Hono<AppEnv>();
@@ -35,11 +36,29 @@ async function expireStalePendingPurchases(env: Env): Promise<number> {
   const minutes = Number(env.BOOKING_EXPIRY_MINUTES) || 15;
   const result = await env.DB.prepare(
     `UPDATE member_packages SET status = 'cancelled'
-     WHERE status = 'pending_payment' AND purchased_at < datetime('now', ?)`
+     WHERE status = 'pending_payment' AND combined_from_member_package_id IS NULL
+       AND purchased_at < datetime('now', ?)`
   )
     .bind(`-${minutes} minutes`)
     .run();
-  return result.meta.changes ?? 0;
+
+  // Renewal purchases (rolling over an old package) and extension fees stay open until the
+  // payment deadline — a number of days after the OLD package's expiry — then lapse.
+  const graceDays = await getRenewalGraceDays(env);
+  const lapsedPurchases = await env.DB.prepare(
+    `UPDATE member_packages SET status = 'cancelled'
+     WHERE status = 'pending_payment' AND combined_from_member_package_id IS NOT NULL
+       AND (SELECT datetime(old.expires_at, ?) FROM member_packages old WHERE old.id = member_packages.combined_from_member_package_id) < datetime('now')`
+  )
+    .bind(`+${graceDays} days`)
+    .run();
+  const lapsedExtensions = await env.DB.prepare(
+    `UPDATE package_renewals SET status = 'cancelled'
+     WHERE status = 'pending' AND option = 'extend' AND datetime(old_expires_at, ?) < datetime('now')`
+  )
+    .bind(`+${graceDays} days`)
+    .run();
+  return (result.meta.changes ?? 0) + (lapsedPurchases.meta.changes ?? 0) + (lapsedExtensions.meta.changes ?? 0);
 }
 
 /** Section 3: packages expire once their validity window passes, freeing any lingering credits. */

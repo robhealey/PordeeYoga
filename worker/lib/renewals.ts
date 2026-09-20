@@ -12,6 +12,20 @@ export interface RenewalResult<T = unknown> {
 /** Packages excluded from any renewal option (section 17). */
 const NON_RENEWABLE_KEYWORDS = ["online", "weekend", "coupon", "trial", "drop-in"];
 
+/** Renewal payment must land within this many days of the package's expiry (default 2). */
+export async function getRenewalGraceDays(env: Env): Promise<number> {
+  try {
+    return await getSettingNumber(env, "renewal_payment_grace_days");
+  } catch {
+    return 2;
+  }
+}
+
+/** Last moment a renewal (extension fee or new-package purchase) can be paid for. */
+function paymentDeadline(expiresAt: string, graceDays: number): Date {
+  return new Date(new Date(expiresAt).getTime() + graceDays * 86_400_000);
+}
+
 async function assertRenewable(env: Env, mp: MemberPackageRow): Promise<{ ok: true } | { ok: false; error: string }> {
   const pkg = await getPackage(env, mp.package_id);
   if (!pkg) return { ok: false, error: "Package not found" };
@@ -19,11 +33,48 @@ async function assertRenewable(env: Env, mp: MemberPackageRow): Promise<{ ok: tr
   if (NON_RENEWABLE_KEYWORDS.some((k) => pkg.name.toLowerCase().includes(k))) {
     return { ok: false, error: `${pkg.name} is not eligible for renewal` };
   }
-  if (mp.renewal_option_used) {
-    return { ok: false, error: "This package has already used its renewal option" };
+  if (mp.status !== "active" && mp.status !== "expired") {
+    return { ok: false, error: `This package can't be renewed (${mp.status})` };
   }
   if (!mp.expires_at) return { ok: false, error: "Package has no expiry to renew" };
+  const graceDays = await getRenewalGraceDays(env);
+  if (Date.now() > paymentDeadline(mp.expires_at, graceDays).getTime()) {
+    return { ok: false, error: `Renewal payment was due within ${graceDays} days of expiry, and that window has passed` };
+  }
   return { ok: true };
+}
+
+/** Renewal options for the member UI, or null when the package isn't (yet) in a renewal window.
+ * Shown once a package has expired or is within a week of expiring, until the payment deadline. */
+export async function describeRenewalOptions(env: Env, mp: MemberPackageRow) {
+  if (!mp.expires_at) return null;
+  const check = await assertRenewable(env, mp);
+  if (!check.ok) return null;
+  const expires = new Date(mp.expires_at).getTime();
+  if (expires - Date.now() > 7 * 86_400_000) return null;
+
+  const [graceDays, months, feeCents, windowMonths] = await Promise.all([
+    getRenewalGraceDays(env),
+    getSettingNumber(env, "renewal_extend_months"),
+    getSettingNumber(env, "renewal_extend_fee_cents"),
+    getSettingNumber(env, "renewal_combine_activation_window_months"),
+  ]);
+  const earmarked = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM member_packages WHERE combined_from_member_package_id = ? AND status != 'cancelled'"
+  )
+    .bind(mp.id)
+    .first<{ n: number }>();
+  const canCombine = mp.renewal_option_used !== "combine" && (earmarked?.n ?? 0) === 0;
+  return {
+    expired: expires < Date.now(),
+    payBy: paymentDeadline(mp.expires_at, graceDays).toISOString(),
+    activateBy: computeExpiry(mp.expires_at, windowMonths, "month"),
+    extendFeeCents: feeCents,
+    extendMonths: months,
+    newExpiresAt: computeExpiry(mp.expires_at, months, "month"),
+    remainingCredits: remainingCredits(mp),
+    canCombine,
+  };
 }
 
 /** Option 2, step 1 (section 17): request the 1-month/THB 500 extension. Recorded as
@@ -39,8 +90,14 @@ export async function createExtendRenewalRequest(
   const check = await assertRenewable(env, mp);
   if (!check.ok) return { ok: false, status: 400, error: check.error };
 
-  if (new Date(mp.expires_at!).getTime() < Date.now()) {
-    return { ok: false, status: 400, error: "Renewal must be requested on or before the original expiry date" };
+  // One unpaid extension at a time: hand back the pending one instead of stacking another.
+  const pending = await env.DB.prepare(
+    "SELECT id, fee_cents, new_expires_at FROM package_renewals WHERE old_member_package_id = ? AND option = 'extend' AND status = 'pending'"
+  )
+    .bind(mp.id)
+    .first<{ id: number; fee_cents: number; new_expires_at: string }>();
+  if (pending) {
+    return { ok: true, data: { renewalId: pending.id, feeCents: pending.fee_cents, newExpiresAt: pending.new_expires_at } };
   }
 
   const months = await getSettingNumber(env, "renewal_extend_months");
@@ -67,7 +124,7 @@ export async function applyExtendRenewal(env: Env, renewalId: number): Promise<v
   if (!renewal || renewal.status !== "pending") return;
 
   await env.DB.prepare(
-    "UPDATE member_packages SET expires_at = ?, status = 'active', renewal_option_used = 'extend' WHERE id = ?"
+    "UPDATE member_packages SET expires_at = ?, status = 'active' WHERE id = ?"
   )
     .bind(renewal.new_expires_at, renewal.old_member_package_id)
     .run();
@@ -85,8 +142,17 @@ export async function assertCombinePurchaseAllowed(
   if (!mp) return { ok: false, error: "Package not found" };
   const check = await assertRenewable(env, mp);
   if (!check.ok) return check;
-  if (new Date(mp.expires_at!).getTime() < Date.now()) {
-    return { ok: false, error: "The new package must be purchased on or before the original package's expiry date" };
+  if (mp.renewal_option_used === "combine") {
+    return { ok: false, error: "This package's remaining classes have already been rolled over" };
+  }
+  // Remaining classes can only roll over into ONE new package.
+  const earmarked = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM member_packages WHERE combined_from_member_package_id = ? AND status != 'cancelled'"
+  )
+    .bind(mp.id)
+    .first<{ n: number }>();
+  if ((earmarked?.n ?? 0) > 0) {
+    return { ok: false, error: "You already have a new package set to receive this package's remaining classes" };
   }
   return { ok: true };
 }
@@ -128,7 +194,7 @@ export async function activateAndMaybeCombine(
   const deadline = computeExpiry(old.expires_at!, windowMonths, "month");
   const withinWindow = Date.now() <= new Date(deadline).getTime();
 
-  if (!withinWindow || old.renewal_option_used) {
+  if (!withinWindow || old.renewal_option_used === "combine") {
     await env.DB.prepare(
       "UPDATE member_packages SET status = 'active', activated_at = ?, expires_at = ? WHERE id = ?"
     )

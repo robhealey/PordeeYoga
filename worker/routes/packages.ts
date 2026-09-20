@@ -9,7 +9,14 @@ import {
   listMemberPackagesForUser,
   listUsablePackagesForUser,
 } from "../lib/packages.ts";
-import { activateAndMaybeCombine, assertCombinePurchaseAllowed, createExtendRenewalRequest } from "../lib/renewals.ts";
+import {
+  activateAndMaybeCombine,
+  assertCombinePurchaseAllowed,
+  createExtendRenewalRequest,
+  describeRenewalOptions,
+} from "../lib/renewals.ts";
+import { computeExpiry } from "../lib/packages.ts";
+import { getSettingNumber } from "../lib/settings.ts";
 import { listBirthdayCouponsForUser } from "../lib/coupons.ts";
 import { pushToOwners } from "../lib/line.ts";
 
@@ -25,7 +32,22 @@ packages.get("/", async (c) => {
 packages.get("/mine", requireUser, async (c) => {
   const user = c.get("user")!;
   const rows = await listMemberPackagesForUser(c.env, user.id);
-  return c.json({ memberPackages: rows });
+  const windowMonths = await getSettingNumber(c.env, "renewal_combine_activation_window_months");
+  const decorated = await Promise.all(
+    rows.map(async (mp) => {
+      const renewal = mp.user_id === user.id ? await describeRenewalOptions(c.env, mp) : null;
+      // For a new package bought to roll over an old one: the date it must be activated by.
+      let combineActivateBy: string | null = null;
+      if (mp.combined_from_member_package_id && (mp.status === "pending_payment" || mp.status === "paid_not_activated")) {
+        const old = await c.env.DB.prepare("SELECT expires_at FROM member_packages WHERE id = ?")
+          .bind(mp.combined_from_member_package_id)
+          .first<{ expires_at: string | null }>();
+        if (old?.expires_at) combineActivateBy = computeExpiry(old.expires_at, windowMonths, "month");
+      }
+      return { ...mp, renewal, combine_activate_by: combineActivateBy };
+    })
+  );
+  return c.json({ memberPackages: decorated });
 });
 
 packages.get("/usable", requireUser, async (c) => {
@@ -61,6 +83,7 @@ packages.post("/purchase", requireUser, async (c) => {
     trialFullName?: string;
     trialPhone?: string;
     renewOldMemberPackageId?: number;
+    note?: string;
   }>();
   if (!Number.isInteger(body.packageId)) return c.json({ error: "packageId is required" }, 400);
 
@@ -86,8 +109,21 @@ packages.post("/purchase", requireUser, async (c) => {
     if (!old || old.user_id !== user.id) return c.json({ error: "Not your package" }, 403);
   }
 
-  const memberPackage = await createPendingMemberPackage(c.env, user.id, pkg, body.renewOldMemberPackageId);
+  const memberPackage = await createPendingMemberPackage(c.env, user.id, pkg, body.renewOldMemberPackageId, body.note);
   return c.json({ memberPackage }, 201);
+});
+
+/** Member edits the note on one of their own packages. */
+packages.patch("/:id/note", requireUser, async (c) => {
+  const user = c.get("user")!;
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "Invalid package id" }, 400);
+  const { note } = await c.req.json<{ note?: string }>();
+  const row = await c.env.DB.prepare("UPDATE member_packages SET note = ? WHERE id = ? AND user_id = ? RETURNING id, note")
+    .bind(note?.trim().slice(0, 100) || null, id, user.id)
+    .first();
+  if (!row) return c.json({ error: "Not found" }, 404);
+  return c.json({ memberPackage: row });
 });
 
 /** Section 17, option 1 step 2: activate a purchased package, combining with an old

@@ -35,6 +35,7 @@ export interface MemberPackageRow {
   renewal_option_used: "combine" | "extend" | null;
   renewed_into_member_package_id: number | null;
   combined_from_member_package_id: number | null;
+  note: string | null;
 }
 
 export async function listActivePackages(env: Env): Promise<PackageRow[]> {
@@ -158,13 +159,14 @@ export async function createPendingMemberPackage(
   env: Env,
   userId: number,
   pkg: PackageRow,
-  combinedFromMemberPackageId?: number
+  combinedFromMemberPackageId?: number,
+  note?: string | null
 ): Promise<MemberPackageRow> {
   const row = await env.DB.prepare(
-    `INSERT INTO member_packages (user_id, package_id, credits_total, price_paid_cents, currency, status, combined_from_member_package_id)
-     VALUES (?, ?, ?, ?, ?, 'pending_payment', ?) RETURNING *`
+    `INSERT INTO member_packages (user_id, package_id, credits_total, price_paid_cents, currency, status, combined_from_member_package_id, note)
+     VALUES (?, ?, ?, ?, ?, 'pending_payment', ?, ?) RETURNING *`
   )
-    .bind(userId, pkg.id, pkg.credits, pkg.price_cents, pkg.currency, combinedFromMemberPackageId ?? null)
+    .bind(userId, pkg.id, pkg.credits, pkg.price_cents, pkg.currency, combinedFromMemberPackageId ?? null, note?.trim().slice(0, 100) || null)
     .first<MemberPackageRow>();
   if (!row) throw new Error("Failed to create member package");
   if (combinedFromMemberPackageId) {

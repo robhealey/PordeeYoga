@@ -121,6 +121,22 @@ admin.get("/class-sessions", async (c) => {
   return c.json({ sessions: results });
 });
 
+/** Testing helper: wipes all class sessions, bookings and waitlist entries, and gives package credits
+ * and birthday coupons back, so the schedule can be re-imported from scratch. Users, packages,
+ * member packages, payments, class types and instructors are left alone. */
+admin.post("/reset-schedule-data", async (c) => {
+  const body = await c.req.json<{ confirm?: string }>().catch(() => ({}) as { confirm?: string });
+  if (body.confirm !== "DELETE") return c.json({ error: 'Send {"confirm":"DELETE"} to proceed' }, 400);
+  const results = await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM waitlist_entries"),
+    c.env.DB.prepare("UPDATE birthday_coupons SET status = 'active', used_at = NULL, used_booking_id = NULL, actual_user_id = NULL WHERE status = 'used'"),
+    c.env.DB.prepare("DELETE FROM bookings"),
+    c.env.DB.prepare("DELETE FROM class_sessions"),
+    c.env.DB.prepare("UPDATE member_packages SET credits_used = 0"),
+  ]);
+  return c.json({ ok: true, deletedBookings: results[2].meta.changes, deletedSessions: results[3].meta.changes });
+});
+
 interface ParsedScheduleSession {
   className: string;
   instructorName: string | null;
@@ -152,14 +168,56 @@ Extract every teacher name and every class session you can find. Respond with ON
 {"instructors":["Name", ...],"sessions":[{"className":"...","instructorName":"Name or null","dayOfWeek":"monday|tuesday|wednesday|thursday|friday|saturday|sunday or null","date":"YYYY-MM-DD or null","time":"start time exactly as printed, e.g. 9.00 or 18.40","endTime":"end time exactly as printed, e.g. 10.00, or null","durationMinutes":number or null}]}
 Every class on the image has a printed time range like "9.00 - 10.00" (dots or colons, 24h clock) directly above the class name: always copy it into "time" and "endTime", never leave them null when a time is visible. Read each day's column top to bottom and include every class in it. Use "dayOfWeek" when the schedule is a recurring weekly grid (e.g. a column headed "Monday"). Use "date" instead only if the image shows specific calendar dates. If duration isn't stated, estimate from the time range shown, else use null. If you truly cannot read the image, return {"instructors":[],"sessions":[]}.`;
 
+  const mediaMatch = body.imageBase64.match(/^data:([^;,]+);base64,/);
+  const mediaType = mediaMatch?.[1] ?? "image/jpeg";
+  const rawBase64 = body.imageBase64.replace(/^data:[^,]+,/, "");
+
   let response: unknown;
+  let modelUsed: string;
   try {
-    const result = await c.env.AI.run("@cf/meta/llama-3.2-11b-vision-instruct", {
-      image: Array.from(bytes),
-      prompt,
-      max_tokens: 2048,
-    });
-    response = (result as { response?: unknown }).response;
+    if (c.env.ANTHROPIC_API_KEY) {
+      modelUsed = "Claude Sonnet 5";
+      // Best accuracy: Claude reads dense posters far better than the free Workers AI models.
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": c.env.ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-5",
+          max_tokens: 4096,
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "image", source: { type: "base64", media_type: mediaType, data: rawBase64 } },
+                { type: "text", text: prompt },
+              ],
+            },
+          ],
+        }),
+      });
+      if (!res.ok) throw new Error(`Anthropic API ${res.status}: ${await res.text()}`);
+      const data = (await res.json()) as { content?: { type: string; text?: string }[] };
+      response = data.content?.find((p) => p.type === "text")?.text ?? "";
+    } else {
+      modelUsed = "Llama 4 Scout (Workers AI)";
+      const result = (await c.env.AI.run("@cf/meta/llama-4-scout-17b-16e-instruct" as keyof AiModels, {
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              { type: "image_url", image_url: { url: `data:${mediaType};base64,${rawBase64}` } },
+            ],
+          },
+        ],
+        max_tokens: 4096,
+      } as never)) as { response?: unknown; choices?: { message?: { content?: unknown } }[] };
+      response = result.response ?? result.choices?.[0]?.message?.content;
+    }
   } catch (err) {
     console.error("schedule-import AI parse failed", err);
     return c.json({ error: "Could not read that image" }, 502);
@@ -202,6 +260,7 @@ Every class on the image has a printed time range like "9.00 - 10.00" (dots or c
   const toMinutes = (t: string | null) => (t ? parseInt(t.slice(0, 2), 10) * 60 + parseInt(t.slice(3), 10) : null);
 
   return c.json({
+    model: modelUsed,
     instructors: parsed.instructors ?? [],
     sessions: (parsed.sessions ?? []).map((s) => {
       // If the model returned a whole range in `time` ("9.00 - 10.00"), split it.
@@ -388,6 +447,46 @@ admin.post("/members", async (c) => {
   return c.json({ member: row }, 201);
 });
 
+/** Merges a walk-in member (created by an admin, no LINE login) into the real account of the same
+ * person who has since signed in with LINE. Everything the walk-in owns (packages, bookings,
+ * waitlist, coupons) moves to the LINE account, then the walk-in record is deleted. */
+admin.post("/members/merge", async (c) => {
+  const body = await c.req.json<{ sourceId: number; targetId: number }>();
+  const sourceId = Number(body.sourceId);
+  const targetId = Number(body.targetId);
+  if (!sourceId || !targetId || sourceId === targetId) return c.json({ error: "Pick two different members" }, 400);
+
+  type U = { id: number; line_user_id: string | null; display_name: string; phone: string | null; date_of_birth: string | null; notes: string | null; role: string };
+  const [source, target] = await Promise.all([
+    c.env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(sourceId).first<U>(),
+    c.env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(targetId).first<U>(),
+  ]);
+  if (!source || !target) return c.json({ error: "Member not found" }, 404);
+  if (source.line_user_id) return c.json({ error: "The walk-in member already has a LINE login — only walk-ins can be merged away" }, 400);
+  if (!target.line_user_id) return c.json({ error: "Merge target must be an account that has signed in with LINE" }, 400);
+  if (source.role !== "customer") return c.json({ error: "Only customer walk-ins can be merged" }, 400);
+
+  const note = `Merged from walk-in "${source.display_name}" (#${source.id}) on ${new Date().toISOString().slice(0, 10)}`;
+  const notes = [target.notes, source.notes, note].filter(Boolean).join("\n");
+  const db = c.env.DB;
+  const results = await db.batch([
+    db.prepare("UPDATE OR IGNORE bookings SET user_id = ? WHERE user_id = ?").bind(targetId, sourceId),
+    db.prepare("UPDATE member_packages SET user_id = ? WHERE user_id = ?").bind(targetId, sourceId),
+    db.prepare("UPDATE OR IGNORE shared_coupon_members SET user_id = ? WHERE user_id = ?").bind(targetId, sourceId),
+    db.prepare("UPDATE birthday_coupons SET user_id = ? WHERE user_id = ?").bind(targetId, sourceId),
+    db.prepare("UPDATE birthday_coupons SET actual_user_id = ? WHERE actual_user_id = ?").bind(targetId, sourceId),
+    db.prepare("UPDATE waitlist_entries SET user_id = ? WHERE user_id = ?").bind(targetId, sourceId),
+    db.prepare("UPDATE expiry_extensions SET admin_user_id = ? WHERE admin_user_id = ?").bind(targetId, sourceId),
+    db.prepare("UPDATE instructors SET user_id = ? WHERE user_id = ?").bind(targetId, sourceId),
+    db.prepare(
+      "UPDATE users SET phone = COALESCE(phone, ?), date_of_birth = COALESCE(date_of_birth, ?), notes = ? WHERE id = ?"
+    ).bind(source.phone, source.date_of_birth, notes, targetId),
+    // Any rows left pointing at the walk-in (e.g. a duplicate booking for the same class) cascade away here.
+    db.prepare("DELETE FROM users WHERE id = ?").bind(sourceId),
+  ]);
+  return c.json({ ok: true, movedBookings: results[0].meta.changes, movedPackages: results[1].meta.changes });
+});
+
 admin.get("/members/:id", async (c) => {
   const id = Number(c.req.param("id"));
   const member = await c.env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(id).first();
@@ -558,14 +657,14 @@ admin.get("/member-packages", async (c) => {
 
 /** Admin manually grants a package to a member (walk-in / cash / comp), marked paid immediately. */
 admin.post("/member-packages", async (c) => {
-  const body = await c.req.json<{ userId: number; packageId: number; markPaid?: boolean }>();
+  const body = await c.req.json<{ userId: number; packageId: number; markPaid?: boolean; note?: string }>();
   if (!Number.isInteger(body.userId) || !Number.isInteger(body.packageId)) {
     return c.json({ error: "userId and packageId are required" }, 400);
   }
   const pkg = await getPackage(c.env, body.packageId);
   if (!pkg) return c.json({ error: "Package not found" }, 404);
 
-  const mp = await createPendingMemberPackage(c.env, body.userId, pkg);
+  const mp = await createPendingMemberPackage(c.env, body.userId, pkg, undefined, body.note);
   if (body.markPaid !== false) {
     await c.env.DB.prepare(
       "INSERT INTO payments (member_package_id, provider, amount_cents, currency, status, updated_at) VALUES (?, 'cash', ?, ?, 'succeeded', datetime('now'))"
@@ -576,6 +675,78 @@ admin.post("/member-packages", async (c) => {
   }
   const fresh = await getMemberPackage(c.env, mp.id);
   return c.json({ memberPackage: fresh }, 201);
+});
+
+/** Admin adjusts a member's package: total/used classes, expiry, status. `creditsTotal: null` = unlimited. */
+admin.patch("/member-packages/:id", async (c) => {
+  const id = Number(c.req.param("id"));
+  const body = await c.req.json<{ creditsTotal?: number | null; creditsUsed?: number; expiresAt?: string | null; status?: string }>();
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  if ("creditsTotal" in body) {
+    if (body.creditsTotal !== null && (!Number.isInteger(body.creditsTotal) || body.creditsTotal! < 0)) {
+      return c.json({ error: "creditsTotal must be a whole number, or empty for unlimited" }, 400);
+    }
+    sets.push("credits_total = ?");
+    values.push(body.creditsTotal);
+  }
+  if ("creditsUsed" in body) {
+    if (!Number.isInteger(body.creditsUsed) || body.creditsUsed! < 0) return c.json({ error: "creditsUsed must be a whole number" }, 400);
+    sets.push("credits_used = ?");
+    values.push(body.creditsUsed);
+  }
+  if ("expiresAt" in body) {
+    if (body.expiresAt !== null && isNaN(new Date(body.expiresAt as string).getTime())) return c.json({ error: "Invalid expiry date" }, 400);
+    sets.push("expires_at = ?");
+    values.push(body.expiresAt ? new Date(body.expiresAt).toISOString() : null);
+  }
+  if ("status" in body) {
+    if (!["active", "expired", "cancelled"].includes(body.status ?? "")) return c.json({ error: "Invalid status" }, 400);
+    sets.push("status = ?");
+    values.push(body.status);
+  }
+  if (sets.length === 0) return c.json({ error: "No fields to update" }, 400);
+  values.push(id);
+  const row = await c.env.DB.prepare(`UPDATE member_packages SET ${sets.join(", ")} WHERE id = ? RETURNING *`)
+    .bind(...values)
+    .first();
+  if (!row) return c.json({ error: "Not found" }, 404);
+  return c.json({ memberPackage: row });
+});
+
+/** Removes a package from a member. If anything still depends on it (bookings, waitlist, renewals,
+ * paid payments) the record is kept but marked cancelled so history and accounting stay intact. */
+admin.delete("/member-packages/:id", async (c) => {
+  const id = Number(c.req.param("id"));
+  const dep = await c.env.DB.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM bookings WHERE member_package_id = ?1)
+     + (SELECT COUNT(*) FROM waitlist_entries WHERE member_package_id = ?1)
+     + (SELECT COUNT(*) FROM package_renewals WHERE old_member_package_id = ?1 OR new_member_package_id = ?1)
+     + (SELECT COUNT(*) FROM expiry_extensions WHERE member_package_id = ?1)
+     + (SELECT COUNT(*) FROM member_packages WHERE renewed_into_member_package_id = ?1 OR combined_from_member_package_id = ?1)
+     + (SELECT COUNT(*) FROM payments WHERE member_package_id = ?1 AND status = 'succeeded') AS n`
+  )
+    .bind(id)
+    .first<{ n: number }>();
+  if ((dep?.n ?? 0) > 0) {
+    const r = await c.env.DB.prepare("UPDATE member_packages SET status = 'cancelled' WHERE id = ?").bind(id).run();
+    if (!r.meta.changes) return c.json({ error: "Not found" }, 404);
+    return c.json({ ok: true, deleted: false, cancelled: true });
+  }
+  const r = await c.env.DB.prepare("DELETE FROM member_packages WHERE id = ?").bind(id).run();
+  if (!r.meta.changes) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true, deleted: true, cancelled: false });
+});
+
+admin.patch("/member-packages/:id/note", async (c) => {
+  const id = Number(c.req.param("id"));
+  const { note } = await c.req.json<{ note?: string }>();
+  const row = await c.env.DB.prepare("UPDATE member_packages SET note = ? WHERE id = ? RETURNING id, note")
+    .bind(note?.trim().slice(0, 100) || null, id)
+    .first();
+  if (!row) return c.json({ error: "Not found" }, 404);
+  return c.json({ memberPackage: row });
 });
 
 admin.get("/member-packages/expiry-extension-flags", async (c) => {

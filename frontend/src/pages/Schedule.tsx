@@ -3,8 +3,6 @@ import { Link } from "react-router-dom";
 import { api, type ClassSession, type MemberPackage, type MyBooking } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import { useLanguage } from "../lib/i18n";
-import { adminApi } from "../lib/adminApi";
-import { PromptModal } from "../components/PromptModal";
 
 // The studio operates in Asia/Bangkok — group/label days in that timezone regardless of the
 // viewer's own device timezone, so "today"/"tomorrow" always matches what the studio means.
@@ -95,8 +93,6 @@ function MemberSummary() {
 function DaySchedule({ sessions, onChanged }: { sessions: ClassSession[]; onChanged: () => void }) {
   const { t } = useLanguage();
   const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
-  const [cancelTargetId, setCancelTargetId] = useState<number | null>(null);
 
   const statusLabel: Record<string, string> = {
     scheduled: t("status.scheduled"),
@@ -136,11 +132,6 @@ function DaySchedule({ sessions, onChanged }: { sessions: ClassSession[]; onChan
     if (key === today) return `Today · ${full}`;
     if (key === tomorrow) return `Tomorrow · ${full}`;
     return full;
-  }
-
-  async function cancelSession(id: number, reason?: string) {
-    await adminApi.cancelSession(id, reason);
-    onChanged();
   }
 
   if (days.length === 0) return <p className="text-sage-500">{t("schedule.empty")}</p>;
@@ -191,7 +182,6 @@ function DaySchedule({ sessions, onChanged }: { sessions: ClassSession[]; onChan
       <div className="space-y-3">
         {current.items.map((s) => {
           const started = new Date(s.start_time).getTime() <= Date.now();
-          const cancellable = isAdmin && !started && s.status !== "cancelled_by_studio";
           const content = (
             <>
               <div className={`w-16 shrink-0 font-medium ${started ? "text-sage-400" : "text-sage-700"}`}>
@@ -208,18 +198,6 @@ function DaySchedule({ sessions, onChanged }: { sessions: ClassSession[]; onChan
                     <p className="text-xs text-sage-400">
                       {s.spots_left > 0 ? t("schedule.spotsLeft", { n: s.spots_left }) : t("schedule.full")}
                     </p>
-                    {cancellable && (
-                      <button
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setCancelTargetId(s.id);
-                        }}
-                        className="text-xs text-red-500 hover:underline"
-                      >
-                        {t("schedule.cancel")}
-                      </button>
-                    )}
                   </div>
                 )}
               </div>
@@ -243,20 +221,6 @@ function DaySchedule({ sessions, onChanged }: { sessions: ClassSession[]; onChan
           );
         })}
       </div>
-
-      {cancelTargetId != null && (
-        <PromptModal
-          title={t("schedule.cancelReasonTitle")}
-          placeholder={t("schedule.cancelReasonPlaceholder")}
-          submitLabel={t("schedule.cancelSubmit")}
-          onClose={() => setCancelTargetId(null)}
-          onSubmit={(value) => {
-            const id = cancelTargetId;
-            setCancelTargetId(null);
-            void cancelSession(id, value.trim() || undefined);
-          }}
-        />
-      )}
     </div>
   );
 }

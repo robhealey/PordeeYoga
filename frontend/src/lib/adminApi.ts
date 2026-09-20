@@ -79,6 +79,7 @@ export interface MemberRow {
   display_name: string;
   phone: string | null;
   date_of_birth: string | null;
+  notes?: string | null;
   role: string;
   created_at: string;
 }
@@ -114,6 +115,7 @@ export interface MemberPackageRow {
   user_id: number;
   package_id: number;
   package_name: string;
+  note?: string | null;
   user_name?: string;
   credits_total: number | null;
   credits_used: number;
@@ -187,6 +189,11 @@ export const adminApi = {
     capacityOverride?: number | null;
     minCapacityOverride?: number | null;
   }) => request<{ session: SessionRow }>("/class-sessions", { method: "POST", body: JSON.stringify(body) }),
+  resetScheduleData: () =>
+    request<{ ok: boolean; deletedBookings: number; deletedSessions: number }>("/reset-schedule-data", {
+      method: "POST",
+      body: JSON.stringify({ confirm: "DELETE" }),
+    }),
   cancelSession: (id: number, reason?: string) =>
     request<{ refundedCount: number }>(`/class-sessions/${id}/cancel`, {
       method: "POST",
@@ -197,7 +204,7 @@ export const adminApi = {
   sessionBookings: (id: number) => request<{ bookings: SessionBookingRow[] }>(`/class-sessions/${id}/bookings`),
   sessionWaitlist: (id: number) => request<{ entries: WaitlistRow[] }>(`/class-sessions/${id}/waitlist`),
   parseScheduleImage: (imageBase64: string) =>
-    request<{ instructors: string[]; sessions: ParsedScheduleSession[] }>("/schedule-import/parse", {
+    request<{ model?: string; instructors: string[]; sessions: ParsedScheduleSession[] }>("/schedule-import/parse", {
       method: "POST",
       body: JSON.stringify({ imageBase64 }),
     }),
@@ -215,6 +222,11 @@ export const adminApi = {
   getMember: (id: number) => request<MemberDetail>(`/members/${id}`),
   createMember: (body: { displayName: string; phone?: string; dateOfBirth?: string; notes?: string }) =>
     request<{ member: MemberRow }>("/members", { method: "POST", body: JSON.stringify(body) }),
+  mergeMembers: (sourceId: number, targetId: number) =>
+    request<{ ok: boolean; movedBookings: number; movedPackages: number }>("/members/merge", {
+      method: "POST",
+      body: JSON.stringify({ sourceId, targetId }),
+    }),
   updateMember: (id: number, body: Record<string, unknown>) =>
     request<{ member: MemberRow }>(`/members/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   issueBirthdayCoupon: (id: number) => request<{ coupon: unknown }>(`/members/${id}/birthday-coupon`, { method: "POST" }),
@@ -232,10 +244,21 @@ export const adminApi = {
     const qs = q.toString();
     return request<{ memberPackages: MemberPackageRow[] }>(`/member-packages${qs ? `?${qs}` : ""}`);
   },
-  grantPackage: (userId: number, packageId: number, markPaid = true) =>
+  updateMemberPackage: (
+    id: number,
+    body: { creditsTotal?: number | null; creditsUsed?: number; expiresAt?: string | null; status?: string }
+  ) => request<{ memberPackage: MemberPackageRow }>(`/member-packages/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteMemberPackage: (id: number) =>
+    request<{ ok: boolean; deleted: boolean; cancelled: boolean }>(`/member-packages/${id}`, { method: "DELETE" }),
+  updatePackageNote: (id: number, note: string) =>
+    request<{ memberPackage: { id: number; note: string | null } }>(`/member-packages/${id}/note`, {
+      method: "PATCH",
+      body: JSON.stringify({ note }),
+    }),
+  grantPackage: (userId: number, packageId: number, markPaid = true, note?: string) =>
     request<{ memberPackage: MemberPackageRow }>("/member-packages", {
       method: "POST",
-      body: JSON.stringify({ userId, packageId, markPaid }),
+      body: JSON.stringify({ userId, packageId, markPaid, note }),
     }),
   expiryExtensionFlags: () => request<{ flagged: MemberPackageRow[] }>("/member-packages/expiry-extension-flags"),
   extendExpiry: (id: number, newExpiresAt: string, reason?: string) =>

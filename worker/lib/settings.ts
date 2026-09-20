@@ -10,6 +10,7 @@ export type SettingKey =
   | "renewal_extend_fee_cents"
   | "renewal_extend_months"
   | "renewal_combine_activation_window_months"
+  | "renewal_payment_grace_days"
   | "birthday_coupon_validity_months"
   | "studio_cancellations_for_extension_eligibility";
 
