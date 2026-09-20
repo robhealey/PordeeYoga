@@ -47,7 +47,7 @@ const BOOKING_LIST_SELECT = `
   SELECT b.id, b.status, b.credit_refunded, b.cancelled_at, b.created_at,
          cs.id AS class_session_id, cs.start_time, cs.end_time,
          ct.name AS class_name,
-         mp.id AS member_package_id, p.name AS package_name,
+         mp.id AS member_package_id, p.name AS package_name, mp.note AS package_note,
          bc.id AS birthday_coupon_id
   FROM bookings b
   JOIN class_sessions cs ON cs.id = b.class_session_id

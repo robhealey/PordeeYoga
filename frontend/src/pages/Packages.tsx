@@ -355,7 +355,9 @@ export function Packages() {
         )}
         <div className="grid gap-3 sm:grid-cols-2">
           {catalog?.map((pkg) => {
-            const signedUp = !renewFor && activePackageIds.has(pkg.id);
+            // One-time offers (trial) can't be repeated; everything else can be bought again, e.g. for a partner.
+            const signedUp = !renewFor && !!pkg.one_time_per_person && activePackageIds.has(pkg.id);
+            const ownedCount = activeMine.filter((mp) => mp.package_id === pkg.id).length;
             return (
               <div key={pkg.id} className="border border-sage-200 rounded-lg p-4 bg-white">
                 <div className="flex justify-between items-start">
@@ -365,6 +367,9 @@ export function Packages() {
                 <p className="text-sm text-sage-500 mt-1">{validity(pkg)}</p>
                 {pkg.shared === 1 && <p className="text-xs text-sage-400 mt-1">{t("packages.sharedPool")}</p>}
 
+                {ownedCount > 0 && !signedUp && (
+                  <p className="text-xs text-sage-500 mt-1">{t("packages.alreadyHave", { n: ownedCount })}</p>
+                )}
                 {signedUp ? (
                   <div className="mt-3 flex items-center gap-2 text-sage-600 text-sm">
                     <CheckBadge className="w-5 h-5 text-sage-500" />

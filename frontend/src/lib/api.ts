@@ -142,6 +142,7 @@ export interface BookingDetail {
   class_name: string;
   member_package_id: number | null;
   package_name: string | null;
+  package_note?: string | null;
   birthday_coupon_id: number | null;
 }
 

@@ -64,7 +64,7 @@ function MemberSummary() {
   }
 
   return (
-    <div className="mb-6 bg-sage-600 text-white rounded-lg p-4">
+    <div className="mt-6 bg-sage-600 text-white rounded-lg p-4">
       <p className="text-sm text-sage-100">{t("schedule.hi", { name: user.display_name.split(" ")[0] })}</p>
       {nextBooking ? (
         <p className="mt-1 font-medium">
@@ -241,11 +241,11 @@ export function Schedule() {
 
   return (
     <div>
-      <MemberSummary />
       <h1 className="text-2xl font-semibold mb-4">{t("schedule.title")}</h1>
       {error && <p className="text-red-600">{error}</p>}
       {!sessions && !error && <p className="text-sage-500">{t("schedule.loading")}</p>}
       {sessions && <DaySchedule sessions={sessions} onChanged={load} />}
+      <MemberSummary />
     </div>
   );
 }

@@ -23,6 +23,7 @@ export function MyBookings() {
   const [bookings, setBookings] = useState<MyBooking[] | null>(null);
   const [waitlist, setWaitlist] = useState<MyWaitlistEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activePackageCount, setActivePackageCount] = useState(0);
 
   const statusLabel: Record<string, string> = {
     confirmed: t("bookingStatus.confirmed"),
@@ -40,6 +41,7 @@ export function MyBookings() {
       .then((r) => setBookings(r.bookings))
       .catch((e) => setError(String(e)));
     api.myWaitlist().then((r) => setWaitlist(r.entries));
+    api.myPackages().then((r) => setActivePackageCount(r.memberPackages.filter((mp) => mp.status === "active").length)).catch(() => {});
   }
 
   useEffect(load, [user]);
@@ -70,6 +72,10 @@ export function MyBookings() {
   }
   if (error) return <p className="text-red-600">{error}</p>;
   if (!bookings) return <p className="text-sage-500">{t("classDetail.loading")}</p>;
+
+  // Only worth labelling the package when there's more than one to tell apart.
+  const multiplePackages =
+    activePackageCount > 1 || new Set(bookings.map((b) => b.member_package_id).filter((id) => id != null)).size > 1;
 
   return (
     <div>
@@ -115,7 +121,12 @@ export function MyBookings() {
               <p className="font-medium">{b.class_name}</p>
               <p className="text-sm text-sage-500">{formatWhen(b.start_time)}</p>
               <p className={`text-xs mt-1 ${statusColor[b.status] ?? ""}`}>{statusLabel[b.status] ?? b.status}</p>
-              {b.package_name && <p className="text-xs text-sage-400">{b.package_name}</p>}
+              {b.package_name && (multiplePackages || b.package_note) && (
+                <p className="text-xs text-sage-500">
+                  {b.package_name}
+                  {b.package_note && <span className="italic"> · {b.package_note}</span>}
+                </p>
+              )}
             </div>
             <div className="flex gap-2">
               {b.status === "confirmed" && new Date(b.start_time).getTime() > Date.now() && (
