@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type BirthdayCoupon, type MemberPackage, type PackageCatalogItem } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
@@ -18,6 +18,53 @@ function CheckBadge({ className = "w-6 h-6" }: { className?: string }) {
   );
 }
 
+/** Free-text label on a package. Saves itself shortly after typing stops, and on blur. */
+function NoteInput({ mp }: { mp: MemberPackage }) {
+  const { t } = useLanguage();
+  const [value, setValue] = useState(mp.note ?? "");
+  const [saved, setSaved] = useState(mp.note ?? "");
+  const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const savedRef = useRef(saved);
+  savedRef.current = saved;
+
+  async function save(next: string) {
+    if (next.trim() === savedRef.current.trim()) return;
+    setState("saving");
+    try {
+      await api.updatePackageNote(mp.id, next.trim());
+      setSaved(next.trim());
+      setState("saved");
+    } catch {
+      setState("error");
+    }
+  }
+
+  useEffect(() => {
+    const timer = setTimeout(() => void save(value), 700);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  return (
+    <div className="flex items-center gap-2 mt-1">
+      <input
+        maxLength={100}
+        value={value}
+        onChange={(e) => {
+          setValue(e.target.value);
+          setState("idle");
+        }}
+        onBlur={() => void save(value)}
+        placeholder={t("packages.addNote")}
+        className="flex-1 min-w-0 border border-sage-200 rounded-md px-2 py-1 text-sm bg-white"
+      />
+      <span className={`text-xs w-12 ${state === "error" ? "text-red-500" : "text-sage-400"}`}>
+        {state === "saving" ? "…" : state === "saved" ? "✓" : state === "error" ? "Failed" : ""}
+      </span>
+    </div>
+  );
+}
+
 export function Packages() {
   const { user, loginWithLine } = useAuth();
   const navigate = useNavigate();
@@ -32,59 +79,6 @@ export function Packages() {
   const [busyId, setBusyId] = useState<number | null>(null);
   const [notes, setNotes] = useState<Record<number, string>>({});
   const [renewFor, setRenewFor] = useState<MemberPackage | null>(null);
-  const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
-  const [noteDraft, setNoteDraft] = useState("");
-
-  async function saveNote(mp: MemberPackage) {
-    try {
-      await api.updatePackageNote(mp.id, noteDraft);
-      setEditingNoteId(null);
-      loadMine();
-    } catch (e) {
-      setError(String(e));
-    }
-  }
-
-  function renderNote(mp: MemberPackage) {
-    if (editingNoteId === mp.id) {
-      return (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void saveNote(mp);
-          }}
-          className="flex gap-2 mt-1"
-        >
-          <input
-            autoFocus
-            maxLength={100}
-            value={noteDraft}
-            onChange={(e) => setNoteDraft(e.target.value)}
-            placeholder={t("packages.notePlaceholder")}
-            className="flex-1 border border-sage-200 rounded-md px-2 py-1 text-sm"
-          />
-          <button type="submit" className="text-sm text-sage-700 underline">
-            {t("packages.saveNote")}
-          </button>
-        </form>
-      );
-    }
-    return (
-      <p className="text-sm text-sage-600 mt-0.5">
-        {mp.note && <span className="italic">“{mp.note}” </span>}
-        <button
-          onClick={() => {
-            setEditingNoteId(mp.id);
-            setNoteDraft(mp.note ?? "");
-          }}
-          className="text-xs text-sage-500 underline"
-        >
-          {mp.note ? t("packages.editNote") : t("packages.addNote")}
-        </button>
-      </p>
-    );
-  }
-
   const statusLabel: Record<string, string> = {
     pending_payment: t("packageStatus.pending_payment"),
     paid_not_activated: t("packageStatus.paid_not_activated"),
@@ -263,7 +257,7 @@ export function Packages() {
             <CheckBadge className="w-9 h-9 text-sage-500 shrink-0" />
             <div className="flex-1">
               <p className="font-medium text-sage-800">{primaryActive.package_name}</p>
-              {renderNote(primaryActive)}
+              <NoteInput key={primaryActive.id} mp={primaryActive} />
               <p className="text-sm text-sage-600">
                 {primaryActive.credits_total == null
                   ? t("packages.unlimitedClasses")
@@ -290,7 +284,7 @@ export function Packages() {
                       ? t("classDetail.unlimited")
                       : t("packages.classesLeft", { used: mp.credits_total - mp.credits_used, total: mp.credits_total })}
                   </span>
-                  {renderNote(mp)}
+                  <NoteInput key={mp.id} mp={mp} />
                   </div>
                 </div>
               ))}
