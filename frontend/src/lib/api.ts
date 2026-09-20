@@ -208,6 +208,7 @@ export interface MemberPackage {
     newExpiresAt: string;
     remainingCredits: number | null;
     canCombine: boolean;
+    canExtend: boolean;
   } | null;
   package_name: string;
   package_shared?: number;

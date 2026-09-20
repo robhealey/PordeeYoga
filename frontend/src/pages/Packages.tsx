@@ -212,6 +212,7 @@ export function Packages() {
                 })}
               </h2>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                {r.canExtend && (
                 <div className="bg-white border border-sage-200 rounded-md p-3 text-sm flex flex-col">
                   <p className="font-medium">{t("renewal.opt1Title")}</p>
                   <p className="text-sage-600 mt-1 flex-1">
@@ -225,6 +226,7 @@ export function Packages() {
                     {t("renewal.opt1Button", { fee })}
                   </button>
                 </div>
+                )}
                 <div className="bg-white border border-sage-200 rounded-md p-3 text-sm flex flex-col">
                   <p className="font-medium">{t("renewal.opt2Title")}</p>
                   <p className="text-sage-600 mt-1 flex-1">

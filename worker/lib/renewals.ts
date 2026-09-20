@@ -44,6 +44,13 @@ async function assertRenewable(env: Env, mp: MemberPackageRow): Promise<{ ok: tr
   return { ok: true };
 }
 
+/** Extensions push out an expiry date, so they only make sense for packages sold for a time period
+ * (e.g. "1 month"), never for a pure credit pack like a drop-in. */
+async function isTimePeriodPackage(env: Env, mp: MemberPackageRow): Promise<boolean> {
+  const pkg = await getPackage(env, mp.package_id);
+  return !!pkg && pkg.validity_value != null && !!pkg.validity_unit && !!mp.expires_at;
+}
+
 /** Renewal options for the member UI, or null when the package isn't (yet) in a renewal window.
  * Shown once a package has expired or is within a week of expiring, until the payment deadline. */
 export async function describeRenewalOptions(env: Env, mp: MemberPackageRow) {
@@ -74,6 +81,7 @@ export async function describeRenewalOptions(env: Env, mp: MemberPackageRow) {
     newExpiresAt: computeExpiry(mp.expires_at, months, "month"),
     remainingCredits: remainingCredits(mp),
     canCombine,
+    canExtend: await isTimePeriodPackage(env, mp),
   };
 }
 
@@ -89,6 +97,9 @@ export async function createExtendRenewalRequest(
 
   const check = await assertRenewable(env, mp);
   if (!check.ok) return { ok: false, status: 400, error: check.error };
+  if (!(await isTimePeriodPackage(env, mp))) {
+    return { ok: false, status: 400, error: "Only time-period packages can be extended" };
+  }
 
   // One unpaid extension at a time: hand back the pending one instead of stacking another.
   const pending = await env.DB.prepare(
