@@ -127,6 +127,7 @@ interface ParsedScheduleSession {
   dayOfWeek: string | null; // "monday".."sunday", if the image shows a recurring weekly timetable
   date: string | null; // YYYY-MM-DD, if the image shows specific dated sessions instead
   time: string | null; // HH:MM, 24h
+  endTime?: string | null;
   durationMinutes: number | null;
 }
 
@@ -148,8 +149,8 @@ admin.post("/schedule-import/parse", async (c) => {
 
   const prompt = `You are reading a yoga studio's class schedule from a photo (a printed timetable, a whiteboard, or a poster).
 Extract every teacher name and every class session you can find. Respond with ONLY minified JSON, no prose, no markdown fences, matching exactly this shape:
-{"instructors":["Name", ...],"sessions":[{"className":"...","instructorName":"Name or null","dayOfWeek":"monday|tuesday|wednesday|thursday|friday|saturday|sunday or null","date":"YYYY-MM-DD or null","time":"HH:MM in 24h or null","durationMinutes":number or null}]}
-Use "dayOfWeek" when the schedule is a recurring weekly grid (e.g. a column headed "Monday"). Use "date" instead only if the image shows specific calendar dates. If duration isn't stated, estimate from the time range shown, else use null. If you truly cannot read the image, return {"instructors":[],"sessions":[]}.`;
+{"instructors":["Name", ...],"sessions":[{"className":"...","instructorName":"Name or null","dayOfWeek":"monday|tuesday|wednesday|thursday|friday|saturday|sunday or null","date":"YYYY-MM-DD or null","time":"start time exactly as printed, e.g. 9.00 or 18.40","endTime":"end time exactly as printed, e.g. 10.00, or null","durationMinutes":number or null}]}
+Every class on the image has a printed time range like "9.00 - 10.00" (dots or colons, 24h clock) directly above the class name: always copy it into "time" and "endTime", never leave them null when a time is visible. Read each day's column top to bottom and include every class in it. Use "dayOfWeek" when the schedule is a recurring weekly grid (e.g. a column headed "Monday"). Use "date" instead only if the image shows specific calendar dates. If duration isn't stated, estimate from the time range shown, else use null. If you truly cannot read the image, return {"instructors":[],"sessions":[]}.`;
 
   let response: unknown;
   try {
@@ -185,16 +186,40 @@ Use "dayOfWeek" when the schedule is a recurring weekly grid (e.g. a column head
     return typeof v === "string" && v.trim().toLowerCase() === "null" ? null : v ?? null;
   }
 
+  /** Accepts "9.00", "9:00", "9.00 - 10.00", "18.40", "9am" etc; returns zero-padded "HH:MM" or null. */
+  function toHHMM(v: unknown): string | null {
+    if (typeof v !== "string") return null;
+    const m = v.match(/(\d{1,2})\s*[.:h]?\s*(\d{2})?\s*(am|pm)?/i);
+    if (!m) return null;
+    let h = parseInt(m[1], 10);
+    const min = m[2] ? parseInt(m[2], 10) : 0;
+    const ap = m[3]?.toLowerCase();
+    if (ap === "pm" && h < 12) h += 12;
+    if (ap === "am" && h === 12) h = 0;
+    if (h > 23 || min > 59) return null;
+    return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+  }
+  const toMinutes = (t: string | null) => (t ? parseInt(t.slice(0, 2), 10) * 60 + parseInt(t.slice(3), 10) : null);
+
   return c.json({
     instructors: parsed.instructors ?? [],
-    sessions: (parsed.sessions ?? []).map((s) => ({
-      className: s.className,
-      instructorName: cleanNullish(s.instructorName),
-      dayOfWeek: cleanNullish(s.dayOfWeek),
-      date: cleanNullish(s.date),
-      time: cleanNullish(s.time),
-      durationMinutes: cleanNullish(s.durationMinutes),
-    })),
+    sessions: (parsed.sessions ?? []).map((s) => {
+      // If the model returned a whole range in `time` ("9.00 - 10.00"), split it.
+      const rangeParts = typeof s.time === "string" ? s.time.split(/\s*[-–—]\s*|\s+to\s+/i) : [];
+      const time = toHHMM(rangeParts[0] ?? s.time);
+      const end = toHHMM(cleanNullish(s.endTime) ?? rangeParts[1]);
+      const start = toMinutes(time);
+      const endMin = toMinutes(end);
+      const derived = start !== null && endMin !== null && endMin > start ? endMin - start : null;
+      return {
+        className: s.className,
+        instructorName: cleanNullish(s.instructorName),
+        dayOfWeek: cleanNullish(s.dayOfWeek),
+        date: cleanNullish(s.date),
+        time,
+        durationMinutes: derived ?? cleanNullish(s.durationMinutes),
+      };
+    }),
   });
 });
 
