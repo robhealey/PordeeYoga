@@ -44,13 +44,6 @@ async function assertRenewable(env: Env, mp: MemberPackageRow): Promise<{ ok: tr
   return { ok: true };
 }
 
-/** Extensions push out an expiry date, so they only make sense for packages sold for a time period
- * (e.g. "1 month"), never for a pure credit pack like a drop-in. */
-async function isTimePeriodPackage(env: Env, mp: MemberPackageRow): Promise<boolean> {
-  const pkg = await getPackage(env, mp.package_id);
-  return !!pkg && pkg.validity_value != null && !!pkg.validity_unit && !!mp.expires_at;
-}
-
 /** Renewal options for the member UI, or null when the package isn't (yet) in a renewal window.
  * Shown once a package has expired or is within a week of expiring, until the payment deadline. */
 export async function describeRenewalOptions(env: Env, mp: MemberPackageRow) {
@@ -60,10 +53,8 @@ export async function describeRenewalOptions(env: Env, mp: MemberPackageRow) {
   const expires = new Date(mp.expires_at).getTime();
   if (expires - Date.now() > 7 * 86_400_000) return null;
 
-  const [graceDays, months, feeCents, windowMonths] = await Promise.all([
+  const [graceDays, windowMonths] = await Promise.all([
     getRenewalGraceDays(env),
-    getSettingNumber(env, "renewal_extend_months"),
-    getSettingNumber(env, "renewal_extend_fee_cents"),
     getSettingNumber(env, "renewal_combine_activation_window_months"),
   ]);
   const earmarked = await env.DB.prepare(
@@ -76,73 +67,12 @@ export async function describeRenewalOptions(env: Env, mp: MemberPackageRow) {
     expired: expires < Date.now(),
     payBy: paymentDeadline(mp.expires_at, graceDays).toISOString(),
     activateBy: computeExpiry(mp.expires_at, windowMonths, "month"),
-    extendFeeCents: feeCents,
-    extendMonths: months,
-    newExpiresAt: computeExpiry(mp.expires_at, months, "month"),
     remainingCredits: remainingCredits(mp),
     canCombine,
-    canExtend: await isTimePeriodPackage(env, mp),
   };
 }
 
-/** Option 2, step 1 (section 17): request the 1-month/THB 500 extension. Recorded as
- * `pending` and not applied to the package until the fee is actually paid — see
- * `applyExtendRenewal`. Must be requested on/before the original expiry. */
-export async function createExtendRenewalRequest(
-  env: Env,
-  params: { memberPackageId: number; processedBy: "member" | "admin" }
-): Promise<RenewalResult<{ renewalId: number; feeCents: number; newExpiresAt: string }>> {
-  const mp = await getMemberPackage(env, params.memberPackageId);
-  if (!mp) return { ok: false, status: 404, error: "Package not found" };
-
-  const check = await assertRenewable(env, mp);
-  if (!check.ok) return { ok: false, status: 400, error: check.error };
-  if (!(await isTimePeriodPackage(env, mp))) {
-    return { ok: false, status: 400, error: "Only time-period packages can be extended" };
-  }
-
-  // One unpaid extension at a time: hand back the pending one instead of stacking another.
-  const pending = await env.DB.prepare(
-    "SELECT id, fee_cents, new_expires_at FROM package_renewals WHERE old_member_package_id = ? AND option = 'extend' AND status = 'pending'"
-  )
-    .bind(mp.id)
-    .first<{ id: number; fee_cents: number; new_expires_at: string }>();
-  if (pending) {
-    return { ok: true, data: { renewalId: pending.id, feeCents: pending.fee_cents, newExpiresAt: pending.new_expires_at } };
-  }
-
-  const months = await getSettingNumber(env, "renewal_extend_months");
-  const feeCents = await getSettingNumber(env, "renewal_extend_fee_cents");
-  const newExpiresAt = computeExpiry(mp.expires_at!, months, "month");
-
-  const renewal = await env.DB.prepare(
-    `INSERT INTO package_renewals
-       (old_member_package_id, option, old_expires_at, old_remaining_credits, new_expires_at, fee_cents, status, processed_by)
-     VALUES (?, 'extend', ?, ?, ?, ?, 'pending', ?) RETURNING *`
-  )
-    .bind(mp.id, mp.expires_at, remainingCredits(mp), newExpiresAt, feeCents, params.processedBy)
-    .first<{ id: number }>();
-  if (!renewal) throw new Error("Failed to record renewal");
-
-  return { ok: true, data: { renewalId: renewal.id, feeCents, newExpiresAt } };
-}
-
-/** Applies a previously-requested extension once its fee payment has succeeded. Idempotent. */
-export async function applyExtendRenewal(env: Env, renewalId: number): Promise<void> {
-  const renewal = await env.DB.prepare("SELECT * FROM package_renewals WHERE id = ?")
-    .bind(renewalId)
-    .first<{ id: number; status: string; old_member_package_id: number; new_expires_at: string }>();
-  if (!renewal || renewal.status !== "pending") return;
-
-  await env.DB.prepare(
-    "UPDATE member_packages SET expires_at = ?, status = 'active' WHERE id = ?"
-  )
-    .bind(renewal.new_expires_at, renewal.old_member_package_id)
-    .run();
-  await env.DB.prepare("UPDATE package_renewals SET status = 'applied' WHERE id = ?").bind(renewal.id).run();
-}
-
-/** Option 1, step 1 (section 17): purchase a new package that will absorb an old package's
+/** Step 1 (section 17): purchase a new package that will absorb an old package's
  * remaining credits once activated. Validated at initiation; the combination itself happens
  * in `activateAndMaybeCombine` once the member actually activates the new package. */
 export async function assertCombinePurchaseAllowed(
@@ -168,7 +98,7 @@ export async function assertCombinePurchaseAllowed(
   return { ok: true };
 }
 
-/** Option 1, step 2 (section 17): activates a newly purchased package. If it was earmarked
+/** Step 2 (section 17): activates a newly purchased package. If it was earmarked
  * to combine with an old package (`combined_from_member_package_id`) and the 2-month
  * activation window from the OLD package's expiry hasn't passed, absorb the old package's
  * remaining credits and apply the new package's expiry to the combined balance. Otherwise

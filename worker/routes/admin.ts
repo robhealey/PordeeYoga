@@ -19,8 +19,6 @@ import {
 } from "../lib/packages.ts";
 import {
   activateAndMaybeCombine,
-  applyExtendRenewal,
-  createExtendRenewalRequest,
 } from "../lib/renewals.ts";
 import {
   addSharedCouponMember,
@@ -792,20 +790,6 @@ admin.get("/member-packages/:id/renewals", async (c) => {
   return c.json({ renewals: results });
 });
 
-/** Admin-processed renewals: skip Omise, mark the fee collected in cash and apply immediately. */
-admin.post("/member-packages/:id/renewals/extend", async (c) => {
-  const id = Number(c.req.param("id"));
-  const result = await createExtendRenewalRequest(c.env, { memberPackageId: id, processedBy: "admin" });
-  if (!result.ok) return c.json({ error: result.error }, (result.status ?? 400) as 400 | 404);
-  await c.env.DB.prepare(
-    "INSERT INTO payments (package_renewal_id, provider, amount_cents, currency, status, updated_at) VALUES (?, 'cash', ?, 'THB', 'succeeded', datetime('now'))"
-  )
-    .bind(result.data!.renewalId, result.data!.feeCents)
-    .run();
-  await applyExtendRenewal(c.env, result.data!.renewalId);
-  return c.json(result.data);
-});
-
 /** Unified queue of manual-PromptPay payments awaiting a human to confirm (no bank API yet). */
 admin.get("/pending-payments", async (c) => {
   const { results: packageRows } = await c.env.DB.prepare(
@@ -815,19 +799,9 @@ admin.get("/pending-payments", async (c) => {
      WHERE mp.status = 'pending_payment' ORDER BY mp.purchased_at ASC`
   ).all<{ id: number; user_name: string; description: string; amount_cents: number; currency: string; created_at: string }>();
 
-  const { results: renewalRows } = await c.env.DB.prepare(
-    `SELECT pr.id, u.display_name AS user_name, 'Package extension' AS description, pr.fee_cents AS amount_cents,
-            'THB' AS currency, pr.created_at
-     FROM package_renewals pr
-     JOIN member_packages mp ON mp.id = pr.old_member_package_id
-     JOIN users u ON u.id = mp.user_id
-     WHERE pr.status = 'pending' AND pr.option = 'extend' ORDER BY pr.created_at ASC`
-  ).all<{ id: number; user_name: string; description: string; amount_cents: number; currency: string; created_at: string }>();
-
   return c.json({
     pending: [
       ...packageRows.map((r) => ({ kind: "package" as const, ...r })),
-      ...renewalRows.map((r) => ({ kind: "renewal" as const, ...r })),
     ].sort((a, b) => a.created_at.localeCompare(b.created_at)),
   });
 });
@@ -856,35 +830,6 @@ admin.post("/member-packages/:id/mark-paid", async (c) => {
 
   const fresh = await getMemberPackage(c.env, id);
   return c.json({ memberPackage: fresh });
-});
-
-/** Confirms a member-initiated renewal-extension PromptPay fee manually. */
-admin.post("/renewals/:id/mark-paid", async (c) => {
-  const id = Number(c.req.param("id"));
-  const renewal = await c.env.DB.prepare(
-    `SELECT pr.status, pr.fee_cents, mp.user_id FROM package_renewals pr
-     JOIN member_packages mp ON mp.id = pr.old_member_package_id WHERE pr.id = ?`
-  )
-    .bind(id)
-    .first<{ status: string; fee_cents: number | null; user_id: number }>();
-  if (!renewal) return c.json({ error: "Not found" }, 404);
-  if (renewal.status !== "pending") return c.json({ error: `Already ${renewal.status}` }, 409);
-
-  await c.env.DB.prepare(
-    "INSERT INTO payments (package_renewal_id, provider, amount_cents, currency, status, updated_at) VALUES (?, 'promptpay_manual', ?, 'THB', 'succeeded', datetime('now'))"
-  )
-    .bind(id, renewal.fee_cents ?? 0)
-    .run();
-  await applyExtendRenewal(c.env, id);
-
-  const user = await c.env.DB.prepare("SELECT line_user_id FROM users WHERE id = ?")
-    .bind(renewal.user_id)
-    .first<{ line_user_id: string | null }>();
-  if (user?.line_user_id) {
-    await pushLineMessage(c.env, user.line_user_id, "✅ Payment confirmed — your package extension is now active!");
-  }
-
-  return c.json({ ok: true });
 });
 
 admin.post("/member-packages/:id/activate", async (c) => {

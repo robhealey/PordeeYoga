@@ -96,17 +96,9 @@ export const api = {
     }),
   activatePackage: (id: number) =>
     request<{ combined: boolean }>(`/packages/${id}/activate`, { method: "POST" }),
-  requestExtendRenewal: (id: number) =>
-    request<{ renewalId: number; feeCents: number; newExpiresAt: string }>(`/packages/${id}/renewals/extend`, {
-      method: "POST",
-    }),
   myBirthdayCoupons: () => request<{ coupons: BirthdayCoupon[] }>("/packages/coupons/birthday"),
-  getRenewal: (id: number) => request<{ renewal: PackageRenewal }>(`/packages/renewals/${id}`),
   notifyPackagePaid: (id: number) => request<{ ok: true }>(`/packages/${id}/notify-paid`, { method: "POST" }),
-  notifyRenewalPaid: (id: number) =>
-    request<{ ok: true }>(`/packages/renewals/${id}/notify-paid`, { method: "POST" }),
-
-  chargeOmise: (body: { memberPackageId?: number; packageRenewalId?: number }) =>
+  chargeOmise: (body: { memberPackageId?: number }) =>
     request<{ chargeId: string; status: string; qrImageUri: string | null }>("/payments/omise/charge", {
       method: "POST",
       body: JSON.stringify(body),
@@ -203,12 +195,8 @@ export interface MemberPackage {
     expired: boolean;
     payBy: string;
     activateBy: string;
-    extendFeeCents: number;
-    extendMonths: number;
-    newExpiresAt: string;
     remainingCredits: number | null;
     canCombine: boolean;
-    canExtend: boolean;
   } | null;
   package_name: string;
   package_shared?: number;

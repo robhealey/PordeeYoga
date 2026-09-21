@@ -1441,8 +1441,7 @@ function PendingPaymentsTab() {
     const key = `${row.kind}-${row.id}`;
     setBusyId(key);
     try {
-      if (row.kind === "package") await adminApi.markPackagePaid(row.id);
-      else await adminApi.markRenewalPaid(row.id);
+      await adminApi.markPackagePaid(row.id);
       load();
     } finally {
       setBusyId(null);

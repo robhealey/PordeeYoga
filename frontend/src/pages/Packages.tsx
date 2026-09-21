@@ -138,19 +138,6 @@ export function Packages() {
     }
   }
 
-  async function extend(mp: MemberPackage) {
-    setBusyId(mp.id);
-    setError(null);
-    try {
-      const { renewalId } = await api.requestExtendRenewal(mp.id);
-      navigate(`/checkout/renewal/${renewalId}`);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusyId(null);
-    }
-  }
-
   async function activate(mp: MemberPackage) {
     setBusyId(mp.id);
     setError(null);
@@ -202,7 +189,6 @@ export function Packages() {
         .map((mp) => {
           const r = mp.renewal!;
           const date = (iso: string) => new Date(iso).toLocaleDateString();
-          const fee = formatMoney(r.extendFeeCents, mp.currency);
           return (
             <section key={`renew-${mp.id}`} className="mb-6 border border-amber-300 bg-amber-50 rounded-lg p-4">
               <h2 className="font-medium text-sage-800">
@@ -211,22 +197,7 @@ export function Packages() {
                   date: date(mp.expires_at!),
                 })}
               </h2>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                {r.canExtend && (
-                <div className="bg-white border border-sage-200 rounded-md p-3 text-sm flex flex-col">
-                  <p className="font-medium">{t("renewal.opt1Title")}</p>
-                  <p className="text-sage-600 mt-1 flex-1">
-                    {t("renewal.opt1Body", { n: r.extendMonths, fee, date: date(r.newExpiresAt) })}
-                  </p>
-                  <button
-                    onClick={() => void extend(mp)}
-                    disabled={busyId === mp.id}
-                    className="mt-2 bg-sage-500 disabled:bg-sage-200 text-white px-3 py-1.5 rounded-md"
-                  >
-                    {t("renewal.opt1Button", { fee })}
-                  </button>
-                </div>
-                )}
+              <div className="mt-3">
                 <div className="bg-white border border-sage-200 rounded-md p-3 text-sm flex flex-col">
                   <p className="font-medium">{t("renewal.opt2Title")}</p>
                   <p className="text-sage-600 mt-1 flex-1">

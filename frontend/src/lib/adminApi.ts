@@ -266,13 +266,10 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify({ newExpiresAt, reason }),
     }),
-  adminExtendRenewal: (id: number) =>
-    request<{ renewalId: number; newExpiresAt: string }>(`/member-packages/${id}/renewals/extend`, { method: "POST" }),
 
   pendingPayments: () => request<{ pending: PendingPaymentRow[] }>("/pending-payments"),
   markPackagePaid: (id: number) =>
     request<{ memberPackage: MemberPackageRow }>(`/member-packages/${id}/mark-paid`, { method: "POST" }),
-  markRenewalPaid: (id: number) => request<{ ok: true }>(`/renewals/${id}/mark-paid`, { method: "POST" }),
 
   listHolidays: () => request<{ holidays: HolidayRow[] }>("/holidays"),
   createHoliday: (body: { date: string; name: string; type?: "public" | "special" }) =>

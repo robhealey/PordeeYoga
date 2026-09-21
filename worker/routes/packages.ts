@@ -12,7 +12,6 @@ import {
 import {
   activateAndMaybeCombine,
   assertCombinePurchaseAllowed,
-  createExtendRenewalRequest,
   describeRenewalOptions,
 } from "../lib/renewals.ts";
 import { computeExpiry } from "../lib/packages.ts";
@@ -54,20 +53,6 @@ packages.get("/usable", requireUser, async (c) => {
   const user = c.get("user")!;
   const rows = await listUsablePackagesForUser(c.env, user.id);
   return c.json({ memberPackages: rows });
-});
-
-packages.get("/renewals/:id", requireUser, async (c) => {
-  const user = c.get("user")!;
-  const id = Number(c.req.param("id"));
-  if (!Number.isInteger(id)) return c.json({ error: "Invalid renewal id" }, 400);
-  const renewal = await c.env.DB.prepare(
-    `SELECT pr.*, mp.user_id FROM package_renewals pr JOIN member_packages mp ON mp.id = pr.old_member_package_id
-     WHERE pr.id = ?`
-  )
-    .bind(id)
-    .first<{ user_id: number } & Record<string, unknown>>();
-  if (!renewal || renewal.user_id !== user.id) return c.json({ error: "Not found" }, 404);
-  return c.json({ renewal });
 });
 
 packages.get("/coupons/birthday", requireUser, async (c) => {
@@ -144,24 +129,6 @@ packages.post("/:id/activate", requireUser, async (c) => {
   return c.json(result.data);
 });
 
-/** Section 17, option 2 step 1: request the paid 1-month extension. Returns a renewalId to
- * pay for via /api/payments/omise/charge — the extension is applied once that succeeds. */
-packages.post("/:id/renewals/extend", requireUser, async (c) => {
-  const user = c.get("user")!;
-  const id = Number(c.req.param("id"));
-  if (!Number.isInteger(id)) return c.json({ error: "Invalid package id" }, 400);
-
-  const mp = await c.env.DB.prepare("SELECT user_id FROM member_packages WHERE id = ?")
-    .bind(id)
-    .first<{ user_id: number }>();
-  if (!mp) return c.json({ error: "Not found" }, 404);
-  if (mp.user_id !== user.id) return c.json({ error: "Not your package" }, 403);
-
-  const result = await createExtendRenewalRequest(c.env, { memberPackageId: id, processedBy: "member" });
-  if (!result.ok) return c.json({ error: result.error }, (result.status ?? 400) as 400 | 404);
-  return c.json(result.data, 201);
-});
-
 /** No live bank integration yet — this just pings the studio's LINE so a human can check
  * their PromptPay app and confirm the payment manually (see admin mark-paid endpoints). */
 packages.post("/:id/notify-paid", requireUser, async (c) => {
@@ -182,28 +149,6 @@ packages.post("/:id/notify-paid", requireUser, async (c) => {
   await pushToOwners(
     c.env,
     `💰 ${user.display_name} says they've paid ${(mp.price_paid_cents / 100).toFixed(0)} ${mp.currency} for ${mp.package_name} via PromptPay. Check Admin > Packages to confirm and activate.`
-  );
-  return c.json({ ok: true });
-});
-
-packages.post("/renewals/:id/notify-paid", requireUser, async (c) => {
-  const user = c.get("user")!;
-  const id = Number(c.req.param("id"));
-  if (!Number.isInteger(id)) return c.json({ error: "Invalid renewal id" }, 400);
-
-  const renewal = await c.env.DB.prepare(
-    `SELECT pr.status, pr.fee_cents, mp.user_id FROM package_renewals pr
-     JOIN member_packages mp ON mp.id = pr.old_member_package_id WHERE pr.id = ?`
-  )
-    .bind(id)
-    .first<{ status: string; fee_cents: number | null; user_id: number }>();
-  if (!renewal) return c.json({ error: "Not found" }, 404);
-  if (renewal.user_id !== user.id) return c.json({ error: "Not your renewal" }, 403);
-  if (renewal.status !== "pending") return c.json({ error: `Already ${renewal.status}` }, 409);
-
-  await pushToOwners(
-    c.env,
-    `💰 ${user.display_name} says they've paid ${((renewal.fee_cents ?? 0) / 100).toFixed(0)} THB for a package extension via PromptPay. Check Admin > Packages to confirm.`
   );
   return c.json({ ok: true });
 });

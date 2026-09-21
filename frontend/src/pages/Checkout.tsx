@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, type MemberPackage, type PackageRenewal } from "../lib/api";
+import { api, type MemberPackage } from "../lib/api";
 import { useLanguage } from "../lib/i18n";
 
 function formatMoney(cents: number, currency: string) {
@@ -16,7 +16,7 @@ interface Payable {
 }
 
 export function Checkout() {
-  const { kind, id } = useParams<{ kind: "package" | "renewal"; id: string }>();
+  const { id } = useParams<{ id: string }>();
   const targetId = Number(id);
   const { t } = useLanguage();
   const [payable, setPayable] = useState<Payable | null>(null);
@@ -38,20 +38,8 @@ export function Checkout() {
     };
   }
 
-  async function loadRenewal(): Promise<Payable> {
-    const { renewal } = await api.getRenewal(targetId);
-    const r = renewal as PackageRenewal;
-    return {
-      description: t("checkout.renewalDescription"),
-      amountCents: r.fee_cents ?? 0,
-      currency: "THB",
-      isPaid: r.status === "applied",
-      isTerminal: r.status === "cancelled",
-    };
-  }
-
   async function load() {
-    const p = kind === "renewal" ? await loadRenewal() : await loadPackage();
+    const p = await loadPackage();
     setPayable(p);
     return p;
   }
@@ -69,14 +57,13 @@ export function Checkout() {
       if (pollRef.current) clearInterval(pollRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind, targetId]);
+  }, [targetId]);
 
   async function notifyPaid() {
     setNotifying(true);
     setError(null);
     try {
-      if (kind === "renewal") await api.notifyRenewalPaid(targetId);
-      else await api.notifyPackagePaid(targetId);
+      await api.notifyPackagePaid(targetId);
       setNotified(true);
     } catch (e) {
       setError(String(e));
@@ -93,8 +80,8 @@ export function Checkout() {
       <div className="max-w-md">
         <h1 className="text-2xl font-semibold text-sage-700">{t("checkout.paymentReceived")}</h1>
         <p className="mt-2 text-sage-600">{payable.description}</p>
-        <Link to={kind === "renewal" ? "/packages" : "/"} className="inline-block mt-4 text-sage-600 underline">
-          {kind === "renewal" ? t("checkout.backToPackages") : t("checkout.browseClasses")}
+        <Link to="/" className="inline-block mt-4 text-sage-600 underline">
+          {t("checkout.browseClasses")}
         </Link>
       </div>
     );

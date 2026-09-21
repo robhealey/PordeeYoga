@@ -17,8 +17,8 @@ interface Payable {
 async function loadPayable(
   c: { env: AppEnv["Bindings"] },
   userId: number,
-  body: { memberPackageId?: number; packageRenewalId?: number }
-): Promise<{ payable: Payable; memberPackageId?: number; packageRenewalId?: number } | { error: string; status: number }> {
+  body: { memberPackageId?: number }
+): Promise<{ payable: Payable; memberPackageId?: number } | { error: string; status: number }> {
   if (body.memberPackageId) {
     const mp = await c.env.DB.prepare(
       `SELECT mp.id, mp.user_id, mp.status, mp.price_paid_cents, mp.currency, p.name AS package_name
@@ -34,32 +34,16 @@ async function loadPayable(
       memberPackageId: mp.id,
     };
   }
-  if (body.packageRenewalId) {
-    const renewal = await c.env.DB.prepare(
-      `SELECT pr.id, pr.status, pr.fee_cents, mp.user_id
-       FROM package_renewals pr JOIN member_packages mp ON mp.id = pr.old_member_package_id
-       WHERE pr.id = ?`
-    )
-      .bind(body.packageRenewalId)
-      .first<{ id: number; status: string; fee_cents: number; user_id: number }>();
-    if (!renewal) return { error: "Renewal not found", status: 404 };
-    if (renewal.user_id !== userId) return { error: "Not your renewal", status: 403 };
-    if (renewal.status !== "pending") return { error: `Already ${renewal.status}`, status: 409 };
-    return {
-      payable: { amountCents: renewal.fee_cents, currency: "THB", description: `${c.env.STUDIO_NAME}: Package extension` },
-      packageRenewalId: renewal.id,
-    };
-  }
-  return { error: "memberPackageId or packageRenewalId is required", status: 400 };
+  return { error: "memberPackageId is required", status: 400 };
 }
 
 payments.post("/omise/charge", requireUser, async (c) => {
   const user = c.get("user")!;
-  const body = await c.req.json<{ memberPackageId?: number; packageRenewalId?: number }>();
+  const body = await c.req.json<{ memberPackageId?: number }>();
 
   const loaded = await loadPayable(c, user.id, body);
   if ("error" in loaded) return c.json({ error: loaded.error }, loaded.status as 400 | 403 | 404 | 409);
-  const { payable, memberPackageId, packageRenewalId } = loaded;
+  const { payable, memberPackageId } = loaded;
 
   const charge = await createPromptPayCharge(c.env, {
     amountSatang: payable.amountCents,
@@ -70,10 +54,10 @@ payments.post("/omise/charge", requireUser, async (c) => {
   const status = mapOmiseStatus(charge.status);
 
   const payment = await c.env.DB.prepare(
-    `INSERT INTO payments (member_package_id, package_renewal_id, provider, provider_charge_id, amount_cents, currency, status, updated_at)
-     VALUES (?, ?, 'omise', ?, ?, ?, ?, datetime('now')) RETURNING id`
+    `INSERT INTO payments (member_package_id, provider, provider_charge_id, amount_cents, currency, status, updated_at)
+     VALUES (?, 'omise', ?, ?, ?, ?, datetime('now')) RETURNING id`
   )
-    .bind(memberPackageId ?? null, packageRenewalId ?? null, charge.id, payable.amountCents, payable.currency, status)
+    .bind(memberPackageId ?? null, charge.id, payable.amountCents, payable.currency, status)
     .first<{ id: number }>();
 
   if (status === "succeeded" && payment) {

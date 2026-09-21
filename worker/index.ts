@@ -42,7 +42,7 @@ async function expireStalePendingPurchases(env: Env): Promise<number> {
     .bind(`-${minutes} minutes`)
     .run();
 
-  // Renewal purchases (rolling over an old package) and extension fees stay open until the
+  // Renewal purchases (rolling over an old package) stay open until the
   // payment deadline — a number of days after the OLD package's expiry — then lapse.
   const graceDays = await getRenewalGraceDays(env);
   const lapsedPurchases = await env.DB.prepare(
@@ -52,13 +52,7 @@ async function expireStalePendingPurchases(env: Env): Promise<number> {
   )
     .bind(`+${graceDays} days`)
     .run();
-  const lapsedExtensions = await env.DB.prepare(
-    `UPDATE package_renewals SET status = 'cancelled'
-     WHERE status = 'pending' AND option = 'extend' AND datetime(old_expires_at, ?) < datetime('now')`
-  )
-    .bind(`+${graceDays} days`)
-    .run();
-  return (result.meta.changes ?? 0) + (lapsedPurchases.meta.changes ?? 0) + (lapsedExtensions.meta.changes ?? 0);
+  return (result.meta.changes ?? 0) + (lapsedPurchases.meta.changes ?? 0);
 }
 
 /** Section 3: packages expire once their validity window passes, freeing any lingering credits. */
