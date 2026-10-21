@@ -1,6 +1,7 @@
 import type { Env } from "../env.d.ts";
 import { getSettingNumber } from "./settings.ts";
 import { pushLineMessage } from "./line.ts";
+import { formatDateTimeForMessage } from "./dateFormat.ts";
 
 export interface WaitlistEntry {
   id: number;
@@ -84,11 +85,7 @@ export async function notifyNextWaiting(env: Env, classSessionId: number): Promi
     .first<{ class_name: string; start_time: string }>();
 
   if (user?.line_user_id && session) {
-    const when = new Date(session.start_time).toLocaleString("en-US", {
-      timeZone: env.TIMEZONE,
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
+    const when = formatDateTimeForMessage(session.start_time, env.TIMEZONE);
     await pushLineMessage(
       env,
       user.line_user_id,

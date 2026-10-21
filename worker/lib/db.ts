@@ -52,12 +52,15 @@ const SESSION_LIST_SELECT = `
   LEFT JOIN instructors i ON i.id = cs.instructor_id
 `;
 
-export async function listUpcomingSessions(env: Env): Promise<ClassSessionRow[]> {
+/** Upcoming sessions, plus ones that started less than `graceMinutes` ago (still bookable late). */
+export async function listUpcomingSessions(env: Env, graceMinutes = 0): Promise<ClassSessionRow[]> {
   const { results } = await env.DB.prepare(
     `${SESSION_LIST_SELECT}
-     WHERE cs.status != 'cancelled_by_studio' AND cs.start_time > datetime('now')
+     WHERE cs.status != 'cancelled_by_studio' AND cs.start_time > datetime('now', ?)
      ORDER BY cs.start_time ASC`
-  ).all<ClassSessionRow>();
+  )
+    .bind(`-${graceMinutes} minutes`)
+    .all<ClassSessionRow>();
   return results;
 }
 

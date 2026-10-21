@@ -36,6 +36,7 @@ export interface MemberPackageRow {
   renewed_into_member_package_id: number | null;
   combined_from_member_package_id: number | null;
   note: string | null;
+  activation_deadline: string | null; // YYYY-MM-DD, studio-local
 }
 
 export async function listActivePackages(env: Env): Promise<PackageRow[]> {
@@ -196,6 +197,14 @@ export async function activateMemberPackage(env: Env, memberPackageId: number): 
   const pkg = await getPackage(env, mp.package_id);
   if (!pkg) throw new Error("Package not found");
 
+  if (mp.activation_deadline) {
+    // Admin set an activation deadline before payment: the clock waits for first use.
+    await env.DB.prepare("UPDATE member_packages SET status = 'active', activated_at = NULL, expires_at = ? WHERE id = ?")
+      .bind(provisionalExpiry(pkg, mp.activation_deadline, env.TIMEZONE), memberPackageId)
+      .run();
+    return;
+  }
+
   const activatedAt = new Date().toISOString();
   const expiresAt =
     pkg.validity_value != null && pkg.validity_unit
@@ -207,6 +216,109 @@ export async function activateMemberPackage(env: Env, memberPackageId: number): 
   )
     .bind(activatedAt, expiresAt, memberPackageId)
     .run();
+}
+
+/** The last instant of a studio-local YYYY-MM-DD date, as a UTC ISO string. */
+export function endOfLocalDayIso(date: string, timeZone: string): string {
+  const guess = new Date(`${date}T23:59:59Z`);
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+    }).formatToParts(guess).map((x) => [x.type, x.value])
+  );
+  const offsetMs = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - guess.getTime();
+  return new Date(guess.getTime() - offsetMs).toISOString();
+}
+
+/** Expiry if a package's clock starts at its activation deadline (i.e. it's never used before then). */
+export function provisionalExpiry(pkg: PackageRow, activationDeadline: string, timeZone: string): string | null {
+  return pkg.validity_value != null && pkg.validity_unit
+    ? computeExpiry(endOfLocalDayIso(activationDeadline, timeZone), pkg.validity_value, pkg.validity_unit)
+    : null;
+}
+
+/** First use of a package that's waiting on its activation deadline: start the validity clock
+ * now (or at the deadline, if that already passed). No-op for packages already started. */
+export async function startPackageClockOnFirstUse(env: Env, memberPackageId: number): Promise<void> {
+  const mp = await getMemberPackage(env, memberPackageId);
+  if (!mp || mp.status !== "active" || mp.activated_at || !mp.activation_deadline) return;
+  const pkg = await getPackage(env, mp.package_id);
+  if (!pkg) return;
+  const deadlineEnd = endOfLocalDayIso(mp.activation_deadline, env.TIMEZONE);
+  const startedAt = new Date().toISOString() < deadlineEnd ? new Date().toISOString() : deadlineEnd;
+  const expiresAt =
+    pkg.validity_value != null && pkg.validity_unit ? computeExpiry(startedAt, pkg.validity_value, pkg.validity_unit) : null;
+  await env.DB.prepare(
+    "UPDATE member_packages SET activated_at = ?, expires_at = ? WHERE id = ? AND activated_at IS NULL"
+  )
+    .bind(startedAt, expiresAt, memberPackageId)
+    .run();
+}
+
+/** Admin sets (or clears, with null) a package's activation deadline. On a package that's already
+ * running but hasn't been used yet, this stops its clock until first use / the deadline. Clearing
+ * it on a package still waiting to start starts the clock today. */
+export async function setActivationDeadline(
+  env: Env,
+  memberPackageId: number,
+  deadline: string | null
+): Promise<{ ok: true; memberPackage: MemberPackageRow } | { ok: false; status: 400 | 404 | 409; error: string }> {
+  if (deadline !== null && !/^\d{4}-\d{2}-\d{2}$/.test(deadline)) {
+    return { ok: false, status: 400, error: "activationDeadline must be a YYYY-MM-DD date" };
+  }
+  const mp = await getMemberPackage(env, memberPackageId);
+  if (!mp) return { ok: false, status: 404, error: "Not found" };
+  if (mp.status !== "active" && mp.status !== "pending_payment") {
+    return { ok: false, status: 409, error: `Can't set an activation deadline on a ${mp.status} package` };
+  }
+  if (deadline !== null && deadline < dateOnlyInTz(new Date().toISOString(), env.TIMEZONE)) {
+    return { ok: false, status: 400, error: "Activation deadline can't be in the past" };
+  }
+  const pkg = await getPackage(env, mp.package_id);
+  if (!pkg) return { ok: false, status: 404, error: "Package not found" };
+
+  if (mp.status === "pending_payment") {
+    // Applied when payment is confirmed (activateMemberPackage).
+    await env.DB.prepare("UPDATE member_packages SET activation_deadline = ? WHERE id = ?").bind(deadline, mp.id).run();
+  } else if (deadline !== null) {
+    if (mp.activated_at) {
+      const used = await env.DB.prepare("SELECT 1 FROM bookings WHERE member_package_id = ? LIMIT 1").bind(mp.id).first();
+      if (used || mp.credits_used > 0) {
+        return { ok: false, status: 409, error: "This package has already been used, so its start date can't be deferred" };
+      }
+    }
+    await env.DB.prepare("UPDATE member_packages SET activation_deadline = ?, activated_at = NULL, expires_at = ? WHERE id = ?")
+      .bind(deadline, provisionalExpiry(pkg, deadline, env.TIMEZONE), mp.id)
+      .run();
+  } else if (!mp.activated_at && mp.activation_deadline) {
+    const now = new Date().toISOString();
+    const expiresAt =
+      pkg.validity_value != null && pkg.validity_unit ? computeExpiry(now, pkg.validity_value, pkg.validity_unit) : null;
+    await env.DB.prepare("UPDATE member_packages SET activation_deadline = NULL, activated_at = ?, expires_at = ? WHERE id = ?")
+      .bind(now, expiresAt, mp.id)
+      .run();
+  } else {
+    await env.DB.prepare("UPDATE member_packages SET activation_deadline = NULL WHERE id = ?").bind(mp.id).run();
+  }
+  return { ok: true, memberPackage: (await getMemberPackage(env, mp.id))! };
+}
+
+/** Cron: packages whose activation deadline has passed unused start counting from the deadline.
+ * Their expires_at already holds that provisional expiry, so only activated_at needs filling in. */
+export async function startPackagesPastActivationDeadline(env: Env): Promise<number> {
+  const today = dateOnlyInTz(new Date().toISOString(), env.TIMEZONE);
+  const { results } = await env.DB.prepare(
+    `SELECT id, activation_deadline FROM member_packages
+     WHERE status = 'active' AND activated_at IS NULL AND activation_deadline IS NOT NULL AND activation_deadline < ?`
+  )
+    .bind(today)
+    .all<{ id: number; activation_deadline: string }>();
+  for (const r of results) {
+    await env.DB.prepare("UPDATE member_packages SET activated_at = ? WHERE id = ? AND activated_at IS NULL")
+      .bind(endOfLocalDayIso(r.activation_deadline, env.TIMEZONE), r.id)
+      .run();
+  }
+  return results.length;
 }
 
 export interface EligibilityResult {

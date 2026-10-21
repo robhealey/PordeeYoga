@@ -3,7 +3,8 @@ import type { Env } from "../env.d.ts";
 /** Admin-configurable business-rule knobs (section 1: rules should change without code changes). */
 export type SettingKey =
   | "booking_window_days"
-  | "late_cancel_window_minutes"
+  | "late_booking_grace_minutes"
+  | "solo_spot_cancel_window_minutes"
   | "default_min_class_capacity"
   | "default_max_class_capacity"
   | "waitlist_claim_minutes"
@@ -24,6 +25,15 @@ export async function getSetting(env: Env, key: SettingKey): Promise<string> {
 
 export async function getSettingNumber(env: Env, key: SettingKey): Promise<number> {
   return Number(await getSetting(env, key));
+}
+
+/** Members can still book this many minutes after a class starts (default 15). */
+export async function getLateBookingGraceMinutes(env: Env): Promise<number> {
+  try {
+    return await getSettingNumber(env, "late_booking_grace_minutes");
+  } catch {
+    return 15;
+  }
 }
 
 export async function getAllSettings(env: Env): Promise<Record<string, string>> {

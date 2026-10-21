@@ -1,8 +1,9 @@
 import type { Env } from "../env.d.ts";
 import { capacityFor, getSessionById } from "./db.ts";
 import { recomputeSessionStatus, type BookingResult } from "./bookings.ts";
-import { getSettingNumber } from "./settings.ts";
+import { getLateBookingGraceMinutes, getSettingNumber } from "./settings.ts";
 import { pushLineMessage } from "./line.ts";
+import { formatDateTimeForMessage } from "./dateFormat.ts";
 
 export interface BirthdayCoupon {
   id: number;
@@ -77,8 +78,9 @@ export async function bookWithBirthdayCoupon(
   if (!session || session.status === "cancelled_by_studio") {
     return { ok: false, status: 404, error: "Class not available" };
   }
-  if (new Date(session.start_time).getTime() <= Date.now()) {
-    return { ok: false, status: 400, error: "Class has already started" };
+  const graceMinutes = await getLateBookingGraceMinutes(env);
+  if (new Date(session.start_time).getTime() + graceMinutes * 60_000 <= Date.now()) {
+    return { ok: false, status: 400, error: `Booking closes ${graceMinutes} minutes after the class starts` };
   }
   const bookingWindowDays = await getSettingNumber(env, "booking_window_days");
   if (new Date(session.start_time).getTime() > Date.now() + bookingWindowDays * 24 * 60 * 60 * 1000) {
@@ -131,7 +133,7 @@ export async function bookWithBirthdayCoupon(
     .bind(params.attendeeUserId)
     .first<{ line_user_id: string | null }>();
   if (attendee?.line_user_id) {
-    const when = new Date(session.start_time).toLocaleString("en-US", { timeZone: env.TIMEZONE, dateStyle: "medium", timeStyle: "short" });
+    const when = formatDateTimeForMessage(session.start_time, env.TIMEZONE);
     await pushLineMessage(env, attendee.line_user_id, `✅ Booking confirmed: ${session.class_name} on ${when}.`);
   }
 

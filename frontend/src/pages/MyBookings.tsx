@@ -3,9 +3,10 @@ import { api, type MyBooking, type MyWaitlistEntry } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import { LoginPrompt } from "../components/LoginPrompt";
 import { useLanguage } from "../lib/i18n";
+import { formatDateTimeLong } from "../lib/dateFormat";
 
 function formatWhen(iso: string) {
-  return new Date(iso).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
+  return formatDateTimeLong(iso);
 }
 
 const statusColor: Record<string, string> = {

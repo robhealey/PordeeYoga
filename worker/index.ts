@@ -11,6 +11,7 @@ import webhooks from "./routes/webhooks.ts";
 import { pushLineMessage } from "./lib/line.ts";
 import { expireStaleNotifications } from "./lib/waitlist.ts";
 import { getRenewalGraceDays } from "./lib/renewals.ts";
+import { startPackagesPastActivationDeadline } from "./lib/packages.ts";
 import type { Env } from "./env.d.ts";
 
 const app = new Hono<AppEnv>();
@@ -99,11 +100,13 @@ export default {
     ctx.waitUntil(
       (async () => {
         const expiredPurchases = await expireStalePendingPurchases(env);
+        const startedPackages = await startPackagesPastActivationDeadline(env);
         const expiredPackages = await expirePastDuePackages(env);
         const waitlistExpired = await expireStaleNotifications(env);
         const reminded = await sendUpcomingClassReminders(env);
         console.log(
-          `cron: expired ${expiredPurchases} pending purchases, ${expiredPackages} past-due packages, ` +
+          `cron: expired ${expiredPurchases} pending purchases, started ${startedPackages} packages past activation deadline, ` +
+            `expired ${expiredPackages} past-due packages, ` +
             `${waitlistExpired} stale waitlist claims, sent ${reminded} reminders`
         );
       })()

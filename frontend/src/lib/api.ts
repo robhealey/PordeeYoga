@@ -121,6 +121,7 @@ export interface ClassSession {
   spots_left: number;
   status: ClassSessionStatus;
   cancellation_reason: string | null;
+  bookable_until?: string; // start time + late-booking grace period
 }
 
 export interface BookingDetail {
@@ -191,6 +192,7 @@ export interface MemberPackage {
   note?: string | null;
   combined_from_member_package_id?: number | null;
   combine_activate_by?: string | null;
+  activation_deadline?: string | null;
   renewal?: {
     expired: boolean;
     payBy: string;

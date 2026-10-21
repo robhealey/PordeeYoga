@@ -14,9 +14,12 @@ import {
   getMemberPackageWithCatalog,
   isUserAuthorizedForMemberPackage,
   remainingCredits,
+  startPackageClockOnFirstUse,
 } from "./packages.ts";
-import { getSettingNumber } from "./settings.ts";
+import { getLateBookingGraceMinutes, getSettingNumber } from "./settings.ts";
 import { notifyNextWaiting } from "./waitlist.ts";
+import { formatDateTimeForMessage } from "./dateFormat.ts";
+import { classConfirmedMessage, notifyAssignedInstructor } from "./instructors.ts";
 
 export interface BookingResult<T = { id: number }> {
   ok: boolean;
@@ -66,7 +69,13 @@ export async function recomputeSessionStatus(env: Env, classSessionId: number): 
 
   const rank = { scheduled: 0, confirmed: 1, full: 2 } as Record<string, number>;
   if (rank[next] > rank[session.status]) {
-    await env.DB.prepare("UPDATE class_sessions SET status = ? WHERE id = ?").bind(next, classSessionId).run();
+    // Conditional on the old status so concurrent bookings only notify the instructor once.
+    const r = await env.DB.prepare("UPDATE class_sessions SET status = ? WHERE id = ? AND status = ?")
+      .bind(next, classSessionId, session.status)
+      .run();
+    if (r.meta.changes && session.status === "scheduled" && new Date(session.start_time).getTime() > Date.now()) {
+      await notifyAssignedInstructor(env, classSessionId, classConfirmedMessage);
+    }
   }
 }
 
@@ -94,8 +103,9 @@ export async function createBooking(
     return { ok: false, status: 404, error: "Class not available" };
   }
   const startMs = new Date(session.start_time).getTime();
-  if (startMs <= Date.now()) {
-    return { ok: false, status: 400, error: "Class has already started" };
+  const graceMinutes = await getLateBookingGraceMinutes(env);
+  if (startMs + graceMinutes * 60_000 <= Date.now()) {
+    return { ok: false, status: 400, error: `Booking closes ${graceMinutes} minutes after the class starts` };
   }
 
   const bookingWindowDays = await getSettingNumber(env, "booking_window_days");
@@ -179,6 +189,7 @@ export async function createBooking(
     await env.DB.prepare("DELETE FROM bookings WHERE id = ?").bind(bookingId).run();
     return { ok: false, status: 409, error: "This package no longer has an available credit" };
   }
+  await startPackageClockOnFirstUse(env, mp.id);
 
   await recomputeSessionStatus(env, params.classSessionId);
 
@@ -186,12 +197,78 @@ export async function createBooking(
     .bind(params.userId)
     .first<{ line_user_id: string | null }>();
   if (user?.line_user_id) {
-    const when = new Date(session.start_time).toLocaleString("en-US", {
-      timeZone: env.TIMEZONE,
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
+    const when = formatDateTimeForMessage(session.start_time, env.TIMEZONE);
     await pushLineMessage(env, user.line_user_id, `✅ Booking confirmed: ${session.class_name} on ${when}.`);
+  }
+
+  return { ok: true, data: { id: bookingId } };
+}
+
+/** Admin-only: manually books a member into a class, including classes that already happened
+ * (to backfill history that predates the app, or fix a missed check-in) or that are full
+ * (admin override). Unlike `createBooking`, this skips the booking-window, "already started",
+ * per-day-limit and class-type-eligibility checks that apply to member self-service booking —
+ * it still validates that a chosen package belongs to the member, is active, and has a credit
+ * to give. */
+export async function adminCreateBooking(
+  env: Env,
+  params: {
+    userId: number;
+    classSessionId: number;
+    memberPackageId?: number | null;
+    status: "confirmed" | "attended" | "no_show";
+  }
+): Promise<BookingResult<{ id: number }>> {
+  const session = await getSessionById(env, params.classSessionId);
+  if (!session) return { ok: false, status: 404, error: "Class not found" };
+  if (session.status === "cancelled_by_studio") {
+    return { ok: false, status: 400, error: "This class was cancelled" };
+  }
+
+  const member = await env.DB.prepare("SELECT id FROM users WHERE id = ?").bind(params.userId).first();
+  if (!member) return { ok: false, status: 404, error: "Member not found" };
+
+  const already = await env.DB.prepare(
+    `SELECT 1 FROM bookings WHERE user_id = ? AND class_session_id = ? AND member_package_id IS ?
+       AND status NOT IN ('cancelled_by_member', 'cancelled_by_studio', 'late_cancelled')`
+  )
+    .bind(params.userId, params.classSessionId, params.memberPackageId ?? null)
+    .first();
+  if (already) {
+    return { ok: false, status: 409, error: "This member is already booked into this class with that package" };
+  }
+
+  let creditValueCents: number | null = null;
+  let mpId: number | null = null;
+  if (params.memberPackageId) {
+    const mp = await getMemberPackageWithCatalog(env, params.memberPackageId);
+    if (!mp) return { ok: false, status: 404, error: "Package not found" };
+    if (!(await isUserAuthorizedForMemberPackage(env, mp.id, params.userId))) {
+      return { ok: false, status: 403, error: "That package doesn't belong to this member" };
+    }
+    if (mp.status !== "active") return { ok: false, status: 400, error: "Package is not active" };
+    const remaining = remainingCredits(mp);
+    if (remaining !== null && remaining <= 0) {
+      return { ok: false, status: 400, error: "No credits remaining on this package" };
+    }
+    creditValueCents = mp.credits_total != null ? Math.round(mp.price_paid_cents / mp.credits_total) : null;
+    mpId = mp.id;
+  }
+
+  const insert = await env.DB.prepare(
+    "INSERT INTO bookings (user_id, class_session_id, member_package_id, credit_value_cents, status) VALUES (?, ?, ?, ?, ?)"
+  )
+    .bind(params.userId, params.classSessionId, mpId, creditValueCents, params.status)
+    .run();
+  const bookingId = insert.meta.last_row_id;
+
+  if (mpId) {
+    await env.DB.prepare("UPDATE member_packages SET credits_used = credits_used + 1 WHERE id = ?").bind(mpId).run();
+    await startPackageClockOnFirstUse(env, mpId);
+  }
+
+  if (session.status !== "completed") {
+    await recomputeSessionStatus(env, params.classSessionId);
   }
 
   return { ok: true, data: { id: bookingId } };
@@ -214,8 +291,9 @@ async function refundCredit(env: Env, booking: BookingRow): Promise<void> {
   }
 }
 
-/** Section 10: member-initiated cancellation. Late (<window) deducts the credit unless the
- * class never reached its minimum, in which case it's always treated as a free cancellation. */
+/** Section 10: member-initiated cancellation. Free by default. The only time a credit is
+ * taken is when cancelling would leave exactly one person still booked in the class AND
+ * it's within the solo-spot window of the class start. */
 export async function cancelBooking(
   env: Env,
   params: { bookingId: number; actingUserId: number; isAdmin: boolean }
@@ -235,11 +313,10 @@ export async function cancelBooking(
     return { ok: false, status: 400, error: "Cannot cancel a class that has already started" };
   }
 
-  const lateCancelWindowMinutes = await getSettingNumber(env, "late_cancel_window_minutes");
+  const soloSpotWindowMinutes = await getSettingNumber(env, "solo_spot_cancel_window_minutes");
   const minutesUntilStart = (new Date(session.start_time).getTime() - Date.now()) / 60_000;
-  const isLate = minutesUntilStart < lateCancelWindowMinutes;
-  const minimumNotYetReached = !isSessionConfirmed(session);
-  const refund = minimumNotYetReached || !isLate;
+  const wouldLeaveOneSpot = session.booked_count - 1 === 1;
+  const refund = !(wouldLeaveOneSpot && minutesUntilStart < soloSpotWindowMinutes);
   const newStatus = !refund ? "late_cancelled" : "cancelled_by_member";
 
   await env.DB.prepare(
@@ -339,11 +416,7 @@ export async function studioCancel(
       await pushLineMessage(
         env,
         user.line_user_id,
-        `⚠️ ${session.class_name} on ${new Date(session.start_time).toLocaleString("en-US", {
-          timeZone: env.TIMEZONE,
-          dateStyle: "medium",
-          timeStyle: "short",
-        })} was cancelled by the studio. Your credit has been returned.`
+        `⚠️ ${session.class_name} on ${formatDateTimeForMessage(session.start_time, env.TIMEZONE)} was cancelled by the studio. Your credit has been returned.`
       );
     }
   }
@@ -359,6 +432,12 @@ export async function studioCancel(
   )
     .bind(params.classSessionId)
     .run();
+
+  await notifyAssignedInstructor(
+    env,
+    params.classSessionId,
+    (className, when) => `❌ Your class has been cancelled: ${className} on ${when}. Reason: ${reason}.`
+  );
 
   return { ok: true, data: { refundedCount: affected.length } };
 }

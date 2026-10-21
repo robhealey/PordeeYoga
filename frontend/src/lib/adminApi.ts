@@ -26,6 +26,9 @@ export interface InstructorRow {
   id: number;
   name: string;
   bio: string | null;
+  user_id: number | null;
+  user_name?: string | null;
+  has_line?: number | null;
 }
 
 export interface SessionRow {
@@ -69,6 +72,7 @@ export interface AdminPaymentRow {
   amount_cents: number;
   currency: string;
   created_at: string;
+  paid_at: string | null;
   user_name: string | null;
   package_name: string | null;
 }
@@ -90,6 +94,7 @@ export interface MemberDetail {
   bookingHistory: { id: number; status: string; created_at: string; class_name: string; start_time: string }[];
   birthdayCoupons: { id: number; status: string; issued_at: string; expires_at: string }[];
   renewalHistory: unknown[];
+  stats: { totalBookings: number; bookingsLast30Days: number };
 }
 
 export interface PackageCatalogRow {
@@ -119,8 +124,13 @@ export interface MemberPackageRow {
   user_name?: string;
   credits_total: number | null;
   credits_used: number;
+  price_paid_cents: number;
+  currency: string;
   status: string;
+  purchased_at: string;
+  activated_at?: string | null;
   expires_at: string | null;
+  activation_deadline?: string | null;
   studio_cancelled_class_count: number;
   expiry_extension_flagged_at: string | null;
 }
@@ -179,6 +189,8 @@ export const adminApi = {
   listInstructors: () => request<{ instructors: InstructorRow[] }>("/instructors"),
   createInstructor: (body: { name: string; bio?: string }) =>
     request<{ instructor: InstructorRow }>("/instructors", { method: "POST", body: JSON.stringify(body) }),
+  updateInstructor: (id: number, body: { userId?: number | null; name?: string }) =>
+    request<{ instructor: InstructorRow }>(`/instructors/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
 
   listSessions: () => request<{ sessions: SessionRow[] }>("/class-sessions"),
   createSession: (body: {
@@ -230,6 +242,10 @@ export const adminApi = {
   updateMember: (id: number, body: Record<string, unknown>) =>
     request<{ member: MemberRow }>(`/members/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   issueBirthdayCoupon: (id: number) => request<{ coupon: unknown }>(`/members/${id}/birthday-coupon`, { method: "POST" }),
+  addMemberBooking: (
+    memberId: number,
+    body: { classSessionId: number; memberPackageId?: number | null; status?: "confirmed" | "attended" | "no_show" }
+  ) => request<{ id: number }>(`/members/${memberId}/bookings`, { method: "POST", body: JSON.stringify(body) }),
 
   listPackageCatalog: () => request<{ packages: PackageCatalogRow[] }>("/packages"),
   createPackage: (body: Record<string, unknown>) =>
@@ -255,10 +271,15 @@ export const adminApi = {
       method: "PATCH",
       body: JSON.stringify({ note }),
     }),
-  grantPackage: (userId: number, packageId: number, markPaid = true, note?: string) =>
+  grantPackage: (userId: number, packageId: number, markPaid = true, note?: string, paidAt?: string, activationDeadline?: string) =>
     request<{ memberPackage: MemberPackageRow }>("/member-packages", {
       method: "POST",
-      body: JSON.stringify({ userId, packageId, markPaid, note }),
+      body: JSON.stringify({ userId, packageId, markPaid, note, paidAt, activationDeadline }),
+    }),
+  setActivationDeadline: (id: number, activationDeadline: string | null) =>
+    request<{ memberPackage: MemberPackageRow }>(`/member-packages/${id}/activation-deadline`, {
+      method: "PATCH",
+      body: JSON.stringify({ activationDeadline }),
     }),
   expiryExtensionFlags: () => request<{ flagged: MemberPackageRow[] }>("/member-packages/expiry-extension-flags"),
   extendExpiry: (id: number, newExpiresAt: string, reason?: string) =>
@@ -268,8 +289,11 @@ export const adminApi = {
     }),
 
   pendingPayments: () => request<{ pending: PendingPaymentRow[] }>("/pending-payments"),
-  markPackagePaid: (id: number) =>
-    request<{ memberPackage: MemberPackageRow }>(`/member-packages/${id}/mark-paid`, { method: "POST" }),
+  markPackagePaid: (id: number, paidAt?: string, activationDeadline?: string) =>
+    request<{ memberPackage: MemberPackageRow }>(`/member-packages/${id}/mark-paid`, {
+      method: "POST",
+      body: JSON.stringify({ paidAt, activationDeadline }),
+    }),
 
   listHolidays: () => request<{ holidays: HolidayRow[] }>("/holidays"),
   createHoliday: (body: { date: string; name: string; type?: "public" | "special" }) =>

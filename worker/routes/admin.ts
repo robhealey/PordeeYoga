@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../types.ts";
 import { attachUser, requireAdmin } from "../middleware/auth.ts";
-import { studioCancel, markAttended, markNoShow, cancelBooking, recomputeSessionStatus } from "../lib/bookings.ts";
+import { studioCancel, markAttended, markNoShow, cancelBooking, recomputeSessionStatus, adminCreateBooking } from "../lib/bookings.ts";
 import {
   addHoliday,
+  dateOnlyInTz,
   getHoliday,
   listHolidays,
   removeHoliday,
@@ -16,6 +17,7 @@ import {
   getMemberPackage,
   getPackage,
   remainingCredits,
+  setActivationDeadline,
 } from "../lib/packages.ts";
 import {
   activateAndMaybeCombine,
@@ -30,6 +32,8 @@ import {
 } from "../lib/coupons.ts";
 import { listWaitlistForSession } from "../lib/waitlist.ts";
 import { pushLineMessage } from "../lib/line.ts";
+import { formatDateForMessage } from "../lib/dateFormat.ts";
+import { classConfirmedMessage, notifyAssignedInstructor } from "../lib/instructors.ts";
 
 const admin = new Hono<AppEnv>();
 
@@ -339,12 +343,14 @@ admin.patch("/class-sessions/:id", async (c) => {
 /** Section 9: force-confirm a class (e.g. Easy Yoga) even below the normal threshold. */
 admin.post("/class-sessions/:id/open-manually", async (c) => {
   const id = Number(c.req.param("id"));
+  const before = await c.env.DB.prepare("SELECT status FROM class_sessions WHERE id = ?").bind(id).first<{ status: string }>();
   const row = await c.env.DB.prepare(
     "UPDATE class_sessions SET opened_manually = 1, status = CASE WHEN status = 'scheduled' THEN 'confirmed' ELSE status END WHERE id = ? RETURNING *"
   )
     .bind(id)
     .first();
   if (!row) return c.json({ error: "Not found" }, 404);
+  if (before?.status === "scheduled") await notifyAssignedInstructor(c.env, id, classConfirmedMessage);
   return c.json({ session: row });
 });
 
@@ -405,8 +411,34 @@ admin.post("/bookings/:id/cancel", async (c) => {
 // -- Instructors ------------------------------------------------------------------
 
 admin.get("/instructors", async (c) => {
-  const { results } = await c.env.DB.prepare("SELECT * FROM instructors ORDER BY name ASC").all();
+  const { results } = await c.env.DB.prepare(
+    `SELECT i.*, u.display_name AS user_name, u.line_user_id IS NOT NULL AS has_line
+     FROM instructors i LEFT JOIN users u ON u.id = i.user_id ORDER BY i.name ASC`
+  ).all();
   return c.json({ instructors: results });
+});
+
+/** Links an instructor to a member account, so they get LINE messages about their classes. */
+admin.patch("/instructors/:id", async (c) => {
+  const id = Number(c.req.param("id"));
+  const body = await c.req.json<{ userId?: number | null; name?: string }>();
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  if ("userId" in body) {
+    if (body.userId !== null && !Number.isInteger(body.userId)) return c.json({ error: "userId must be a member id or null" }, 400);
+    sets.push("user_id = ?");
+    values.push(body.userId);
+  }
+  if (body.name?.trim()) {
+    sets.push("name = ?");
+    values.push(body.name.trim());
+  }
+  if (sets.length === 0) return c.json({ error: "No fields to update" }, 400);
+  const row = await c.env.DB.prepare(`UPDATE instructors SET ${sets.join(", ")} WHERE id = ? RETURNING *`)
+    .bind(...values, id)
+    .first();
+  if (!row) return c.json({ error: "Not found" }, 404);
+  return c.json({ instructor: row });
 });
 
 admin.post("/instructors", async (c) => {
@@ -511,8 +543,23 @@ admin.get("/members/:id", async (c) => {
   )
     .bind(id)
     .all();
+  const stats = await c.env.DB.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM bookings WHERE user_id = ?1) AS total_bookings,
+       (SELECT COUNT(*) FROM bookings WHERE user_id = ?1 AND created_at >= datetime('now', '-30 days')) AS bookings_last_30_days
+    `
+  )
+    .bind(id)
+    .first<{ total_bookings: number; bookings_last_30_days: number }>();
 
-  return c.json({ member, memberPackages, bookingHistory, birthdayCoupons, renewalHistory });
+  return c.json({
+    member,
+    memberPackages,
+    bookingHistory,
+    birthdayCoupons,
+    renewalHistory,
+    stats: { totalBookings: stats?.total_bookings ?? 0, bookingsLast30Days: stats?.bookings_last_30_days ?? 0 },
+  });
 });
 
 admin.patch("/members/:id", async (c) => {
@@ -540,6 +587,30 @@ admin.patch("/members/:id", async (c) => {
     .first();
   if (!row) return c.json({ error: "Not found" }, 404);
   return c.json({ member: row });
+});
+
+/** Admin manually adds a member to a class — including classes already in the past, to backfill
+ * attendance history, or full classes (admin override). Optionally deducts a credit from one of
+ * the member's packages; leaving `memberPackageId` out books them without touching any package. */
+admin.post("/members/:id/bookings", async (c) => {
+  const id = Number(c.req.param("id"));
+  const body = await c.req.json<{
+    classSessionId: number;
+    memberPackageId?: number | null;
+    status?: "confirmed" | "attended" | "no_show";
+  }>();
+  if (!Number.isInteger(body.classSessionId)) return c.json({ error: "classSessionId is required" }, 400);
+  const status = body.status ?? "confirmed";
+  if (!["confirmed", "attended", "no_show"].includes(status)) return c.json({ error: "Invalid status" }, 400);
+
+  const result = await adminCreateBooking(c.env, {
+    userId: id,
+    classSessionId: body.classSessionId,
+    memberPackageId: body.memberPackageId ?? null,
+    status,
+  });
+  if (!result.ok) return c.json({ error: result.error }, (result.status ?? 400) as 400 | 403 | 404 | 409);
+  return c.json(result.data, 201);
 });
 
 /** Section 16: admin issues a birthday coupon to a member. */
@@ -655,19 +726,37 @@ admin.get("/member-packages", async (c) => {
 
 /** Admin manually grants a package to a member (walk-in / cash / comp), marked paid immediately. */
 admin.post("/member-packages", async (c) => {
-  const body = await c.req.json<{ userId: number; packageId: number; markPaid?: boolean; note?: string }>();
+  const body = await c.req.json<{
+    userId: number;
+    packageId: number;
+    markPaid?: boolean;
+    note?: string;
+    paidAt?: string;
+    activationDeadline?: string;
+  }>();
   if (!Number.isInteger(body.userId) || !Number.isInteger(body.packageId)) {
     return c.json({ error: "userId and packageId are required" }, 400);
+  }
+  if (body.paidAt && !/^\d{4}-\d{2}-\d{2}$/.test(body.paidAt)) {
+    return c.json({ error: "paidAt must be a YYYY-MM-DD date" }, 400);
   }
   const pkg = await getPackage(c.env, body.packageId);
   if (!pkg) return c.json({ error: "Package not found" }, 404);
 
   const mp = await createPendingMemberPackage(c.env, body.userId, pkg, undefined, body.note);
+  if (body.activationDeadline) {
+    const r = await setActivationDeadline(c.env, mp.id, body.activationDeadline);
+    if (!r.ok) {
+      await c.env.DB.prepare("DELETE FROM member_packages WHERE id = ?").bind(mp.id).run();
+      return c.json({ error: r.error }, r.status);
+    }
+  }
   if (body.markPaid !== false) {
+    const paidAt = body.paidAt || dateOnlyInTz(new Date().toISOString(), c.env.TIMEZONE);
     await c.env.DB.prepare(
-      "INSERT INTO payments (member_package_id, provider, amount_cents, currency, status, updated_at) VALUES (?, 'cash', ?, ?, 'succeeded', datetime('now'))"
+      "INSERT INTO payments (member_package_id, provider, amount_cents, currency, status, paid_at, updated_at) VALUES (?, 'cash', ?, ?, 'succeeded', ?, datetime('now'))"
     )
-      .bind(mp.id, pkg.price_cents, pkg.currency)
+      .bind(mp.id, pkg.price_cents, pkg.currency, paidAt)
       .run();
     await activateMemberPackage(c.env, mp.id);
   }
@@ -747,6 +836,15 @@ admin.patch("/member-packages/:id/note", async (c) => {
   return c.json({ memberPackage: row });
 });
 
+/** Sets/clears the date by which the member must start using the package. */
+admin.patch("/member-packages/:id/activation-deadline", async (c) => {
+  const id = Number(c.req.param("id"));
+  const { activationDeadline } = await c.req.json<{ activationDeadline?: string | null }>();
+  const r = await setActivationDeadline(c.env, id, activationDeadline || null);
+  if (!r.ok) return c.json({ error: r.error }, r.status);
+  return c.json({ memberPackage: r.memberPackage });
+});
+
 admin.get("/member-packages/expiry-extension-flags", async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT mp.*, p.name AS package_name, u.display_name AS user_name
@@ -807,17 +905,30 @@ admin.get("/pending-payments", async (c) => {
 });
 
 /** Confirms a member-initiated PromptPay payment manually (no live bank integration yet):
- * admin checks their banking app, then activates the package here. */
+ * admin checks their banking app, then activates the package here. `paidAt` is the date the
+ * transfer actually happened, which may be earlier than today. */
 admin.post("/member-packages/:id/mark-paid", async (c) => {
   const id = Number(c.req.param("id"));
+  const body = await c.req
+    .json<{ paidAt?: string; activationDeadline?: string }>()
+    .catch(() => ({}) as { paidAt?: string; activationDeadline?: string });
+  if (body.paidAt && !/^\d{4}-\d{2}-\d{2}$/.test(body.paidAt)) {
+    return c.json({ error: "paidAt must be a YYYY-MM-DD date" }, 400);
+  }
   const mp = await getMemberPackage(c.env, id);
   if (!mp) return c.json({ error: "Not found" }, 404);
   if (mp.status !== "pending_payment") return c.json({ error: `Already ${mp.status}` }, 409);
 
+  if (body.activationDeadline) {
+    const r = await setActivationDeadline(c.env, id, body.activationDeadline);
+    if (!r.ok) return c.json({ error: r.error }, r.status);
+  }
+
+  const paidAt = body.paidAt || dateOnlyInTz(new Date().toISOString(), c.env.TIMEZONE);
   await c.env.DB.prepare(
-    "INSERT INTO payments (member_package_id, provider, amount_cents, currency, status, updated_at) VALUES (?, 'promptpay_manual', ?, ?, 'succeeded', datetime('now'))"
+    "INSERT INTO payments (member_package_id, provider, amount_cents, currency, status, paid_at, updated_at) VALUES (?, 'promptpay_manual', ?, ?, 'succeeded', ?, datetime('now'))"
   )
-    .bind(id, mp.price_paid_cents, mp.currency)
+    .bind(id, mp.price_paid_cents, mp.currency, paidAt)
     .run();
   await activateMemberPackage(c.env, id);
 
@@ -825,7 +936,14 @@ admin.post("/member-packages/:id/mark-paid", async (c) => {
     .bind(mp.user_id)
     .first<{ line_user_id: string | null }>();
   if (user?.line_user_id) {
-    await pushLineMessage(c.env, user.line_user_id, "✅ Payment confirmed — your package is now active!");
+    const fresh = await getMemberPackage(c.env, id);
+    await pushLineMessage(
+      c.env,
+      user.line_user_id,
+      fresh?.activation_deadline && !fresh.activated_at
+        ? `✅ Payment confirmed — your package is ready! Please start using it by ${formatDateForMessage(fresh.activation_deadline)}.`
+        : "✅ Payment confirmed — your package is now active!"
+    );
   }
 
   const fresh = await getMemberPackage(c.env, id);

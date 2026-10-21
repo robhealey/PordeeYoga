@@ -1,19 +1,27 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../types.ts";
 import { attachUser, requireUser } from "../middleware/auth.ts";
-import { capacityFor, getSessionById, listUpcomingSessions, spotsLeft } from "../lib/db.ts";
+import { capacityFor, getSessionById, listUpcomingSessions, spotsLeft, type ClassSessionRow } from "../lib/db.ts";
+import { getLateBookingGraceMinutes } from "../lib/settings.ts";
 
 const classes = new Hono<AppEnv>();
 
 classes.use("*", attachUser);
 
+/** Last moment members can book: start time plus the late-booking grace period. */
+function bookableUntil(s: ClassSessionRow, graceMinutes: number): string {
+  return new Date(new Date(s.start_time).getTime() + graceMinutes * 60_000).toISOString();
+}
+
 classes.get("/", async (c) => {
-  const sessions = await listUpcomingSessions(c.env);
+  const grace = await getLateBookingGraceMinutes(c.env);
+  const sessions = await listUpcomingSessions(c.env, grace);
   return c.json({
     sessions: sessions.map((s) => ({
       ...s,
       capacity: capacityFor(s),
       spots_left: spotsLeft(s),
+      bookable_until: bookableUntil(s, grace),
     })),
   });
 });
@@ -25,8 +33,14 @@ classes.get("/:id", async (c) => {
   const session = await getSessionById(c.env, id);
   if (!session) return c.json({ error: "Not found" }, 404);
 
+  const grace = await getLateBookingGraceMinutes(c.env);
   return c.json({
-    session: { ...session, capacity: capacityFor(session), spots_left: spotsLeft(session) },
+    session: {
+      ...session,
+      capacity: capacityFor(session),
+      spots_left: spotsLeft(session),
+      bookable_until: bookableUntil(session, grace),
+    },
   });
 });
 

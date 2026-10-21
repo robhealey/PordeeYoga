@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type ClassSession, type MemberPackage } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import { useLanguage } from "../lib/i18n";
+import { formatDate, formatDateTimeLong } from "../lib/dateFormat";
 
 export function ClassDetail() {
   const { id } = useParams();
@@ -63,7 +64,7 @@ export function ClassDetail() {
     if (!selectedPackageId) return;
     const chosen = packages?.find((p) => p.id === selectedPackageId);
     const pkgLabel = chosen ? `${chosen.package_name}${chosen.note ? ` (${chosen.note})` : ""}` : "";
-    const when = new Date(session.start_time).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
+    const when = formatDateTimeLong(session.start_time);
     const left = chosen && chosen.credits_total != null ? chosen.credits_total - chosen.credits_used - 1 : null;
     const message =
       (alreadyBooked
@@ -111,7 +112,7 @@ export function ClassDetail() {
     <div className="max-w-lg">
       <h1 className="text-2xl font-semibold">{session.class_name}</h1>
       <p className="text-sage-500 mt-1">
-        {new Date(session.start_time).toLocaleString("en-US", { dateStyle: "full", timeStyle: "short" })}
+        {formatDateTimeLong(session.start_time, { weekday: "long" })}
       </p>
       {session.instructor_name && <p className="text-sage-500">{t("classDetail.with", { name: session.instructor_name })}</p>}
       <p className="mt-2 text-sage-700">{t("classDetail.minutes", { n: session.duration_minutes })}</p>
@@ -168,7 +169,7 @@ export function ClassDetail() {
                   <span className="block text-sm text-sage-500">
                     {bookedPackageIds.has(mp.id) && <span className="text-sage-600">{t("classDetail.alreadyBookedWith")} · </span>}
                     {remaining(mp)}
-                    {mp.expires_at ? ` — ${t("classDetail.expires", { date: new Date(mp.expires_at).toLocaleDateString() })}` : ""}
+                    {mp.expires_at ? ` — ${t("classDetail.expires", { date: formatDate(mp.expires_at) })}` : ""}
                   </span>
                 </span>
               </label>

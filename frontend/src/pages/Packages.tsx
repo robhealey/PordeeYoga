@@ -4,6 +4,7 @@ import { api, type BirthdayCoupon, type MemberPackage, type PackageCatalogItem }
 import { useAuth } from "../lib/AuthContext";
 import { LoginPrompt } from "../components/LoginPrompt";
 import { useLanguage } from "../lib/i18n";
+import { formatDate } from "../lib/dateFormat";
 
 function formatMoney(cents: number, currency: string) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
@@ -138,6 +139,14 @@ export function Packages() {
     }
   }
 
+  /** " · expires …", or " · start using by …" while the package's clock hasn't started yet. */
+  function validityText(mp: MemberPackage) {
+    if (mp.status === "active" && mp.activation_deadline && !mp.activated_at) {
+      return ` · ${t("packages.startBy", { date: formatDate(mp.activation_deadline) })}`;
+    }
+    return mp.expires_at ? ` · ${t("packages.expires", { date: formatDate(mp.expires_at) })}` : "";
+  }
+
   async function activate(mp: MemberPackage) {
     setBusyId(mp.id);
     setError(null);
@@ -188,7 +197,7 @@ export function Packages() {
         .filter((mp) => mp.renewal)
         .map((mp) => {
           const r = mp.renewal!;
-          const date = (iso: string) => new Date(iso).toLocaleDateString();
+          const date = (iso: string) => formatDate(iso);
           return (
             <section key={`renew-${mp.id}`} className="mb-6 border border-amber-300 bg-amber-50 rounded-lg p-4">
               <h2 className="font-medium text-sage-800">
@@ -238,8 +247,7 @@ export function Packages() {
                       used: primaryActive.credits_total - primaryActive.credits_used,
                       total: primaryActive.credits_total,
                     })}
-                {primaryActive.expires_at &&
-                  ` · ${t("packages.expires", { date: new Date(primaryActive.expires_at).toLocaleDateString() })}`}
+                {validityText(primaryActive)}
               </p>
             </div>
           </div>
@@ -256,6 +264,7 @@ export function Packages() {
                     {mp.credits_total == null
                       ? t("classDetail.unlimited")
                       : t("packages.classesLeft", { used: mp.credits_total - mp.credits_used, total: mp.credits_total })}
+                    {validityText(mp)}
                   </span>
                   <NoteInput key={mp.id} mp={mp} />
                   </div>
@@ -278,11 +287,11 @@ export function Packages() {
                     {mp.credits_total == null
                       ? t("classDetail.unlimited")
                       : t("packages.classesLeft", { used: mp.credits_total - mp.credits_used, total: mp.credits_total })}
-                    {mp.expires_at && ` · ${t("packages.expires", { date: new Date(mp.expires_at).toLocaleDateString() })}`}
+                    {validityText(mp)}
                   </p>
                   <p className="text-xs text-sage-400">
                     {statusLabel[mp.status] ?? mp.status}
-                    {mp.combine_activate_by && ` · ${t("renewal.activateBy", { date: new Date(mp.combine_activate_by).toLocaleDateString() })}`}
+                    {mp.combine_activate_by && ` · ${t("renewal.activateBy", { date: formatDate(mp.combine_activate_by) })}`}
                   </p>
                 </div>
                 {mp.status === "paid_not_activated" && (
@@ -309,7 +318,7 @@ export function Packages() {
                 <span className={c.status === "active" ? "text-sage-700" : "text-sage-400"}>
                   {c.status === "active" ? t("packages.couponReady") : c.status === "used" ? t("packages.couponUsed") : t("packages.couponExpired")}
                 </span>
-                <span className="text-sage-400"> · {t("packages.expires", { date: new Date(c.expires_at).toLocaleDateString() })}</span>
+                <span className="text-sage-400"> · {t("packages.expires", { date: formatDate(c.expires_at) })}</span>
               </div>
             ))}
           </div>
