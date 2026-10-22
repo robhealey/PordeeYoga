@@ -4,6 +4,7 @@ import { api, type ClassSession, type MemberPackage, type MyBooking } from "../l
 import { useAuth } from "../lib/AuthContext";
 import { useLanguage } from "../lib/i18n";
 import { formatDate } from "../lib/dateFormat";
+import LevelBadge from "../components/LevelBadge";
 
 // The studio operates in Asia/Bangkok — group/label days in that timezone regardless of the
 // viewer's own device timezone, so "today"/"tomorrow" always matches what the studio means.
@@ -225,6 +226,7 @@ function DaySchedule({ sessions, onChanged }: { sessions: ClassSession[]; onChan
                   <span className="text-sage-500 text-xs">{closed ? t("schedule.started") : lateBookable ? t("schedule.lateBooking") : statusLabel[s.status] ?? s.status}</span>
                 </div>
                 {s.instructor_name && <p className="text-sm text-sage-500">{t("classDetail.with", { name: s.instructor_name })}</p>}
+                <LevelBadge level={s.level} className="mt-1" />
                 {booked && (
                   <span className="inline-flex items-center gap-1 mt-2 rounded-full bg-sage-600 text-white text-xs font-medium px-2.5 py-0.5">
                     <span aria-hidden>✓</span>

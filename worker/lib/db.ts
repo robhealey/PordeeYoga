@@ -11,7 +11,11 @@ export interface ClassType {
   active: number;
   min_confirm_count: number;
   min_confirm_value_cents: number | null;
+  level: ClassLevel;
 }
+
+export type ClassLevel = "beginner" | "advanced" | "both";
+export const CLASS_LEVELS: ClassLevel[] = ["beginner", "advanced", "both"];
 
 export type ClassSessionStatus = "scheduled" | "confirmed" | "full" | "cancelled_by_studio" | "completed";
 
@@ -26,6 +30,7 @@ export interface ClassSessionRow {
   status: ClassSessionStatus;
   opened_manually: number;
   cancellation_reason: string | null;
+  level: ClassLevel; // session override, else the class type's level
   class_name: string;
   price_cents: number;
   currency: string;
@@ -42,6 +47,7 @@ const SESSION_LIST_SELECT = `
   SELECT
     cs.id, cs.class_type_id, cs.instructor_id, cs.start_time, cs.end_time,
     cs.min_capacity_override, cs.capacity_override, cs.status, cs.opened_manually, cs.cancellation_reason,
+    COALESCE(cs.level, ct.level) AS level,
     ct.name AS class_name, ct.price_cents, ct.currency, ct.duration_minutes,
     ct.capacity AS class_capacity, ct.min_confirm_count, ct.min_confirm_value_cents,
     i.name AS instructor_name,

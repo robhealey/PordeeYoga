@@ -18,6 +18,14 @@ import {
   type WaitlistRow,
 } from "../lib/adminApi";
 import { formatDate, formatDateOnly, formatDateTime } from "../lib/dateFormat";
+import type { ClassLevel } from "../lib/api";
+
+const LEVEL_OPTIONS: { value: ClassLevel; label: string }[] = [
+  { value: "beginner", label: "Beginner" },
+  { value: "advanced", label: "Advanced" },
+  { value: "both", label: "Both" },
+];
+const LEVEL_SHORT: Record<ClassLevel, string> = { beginner: "B", advanced: "A", both: "B/A" };
 
 type Tab =
   | "sessions"
@@ -88,6 +96,7 @@ function ClassTypesTab() {
     capacity: 11,
     priceCents: 50000,
     minConfirmCount: 2,
+    level: "both" as ClassLevel,
   });
   const [error, setError] = useState<string | null>(null);
 
@@ -101,11 +110,16 @@ function ClassTypesTab() {
     setError(null);
     try {
       await adminApi.createClassType(form);
-      setForm({ name: "", durationMinutes: 60, capacity: 11, priceCents: 50000, minConfirmCount: 2 });
+      setForm({ name: "", durationMinutes: 60, capacity: 11, priceCents: 50000, minConfirmCount: 2, level: "both" });
       load();
     } catch (e) {
       setError(String(e));
     }
+  }
+
+  async function setLevel(ct: ClassTypeRow, level: ClassLevel) {
+    await adminApi.updateClassType(ct.id, { level });
+    load();
   }
 
   async function toggleActive(ct: ClassTypeRow) {
@@ -164,6 +178,18 @@ function ClassTypesTab() {
             className="w-28 border border-sage-200 rounded-md px-2 py-1 text-sm text-sage-800"
           />
         </label>
+        <label className="flex flex-col text-xs text-sage-500 gap-1">
+          Level
+          <select
+            value={form.level}
+            onChange={(e) => setForm({ ...form, level: e.target.value as ClassLevel })}
+            className="border border-sage-200 rounded-md px-2 py-1 text-sm text-sage-800"
+          >
+            {LEVEL_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </label>
         <button className="bg-sage-500 text-white px-3 py-1 rounded-md self-end">Add class type</button>
       </form>
       {error && <p className="text-red-600 mb-2">{error}</p>}
@@ -175,6 +201,7 @@ function ClassTypesTab() {
               <th className="p-2">Minutes</th>
               <th className="p-2">Capacity</th>
               <th className="p-2">Min to confirm</th>
+              <th className="p-2">Level</th>
               <th className="p-2">Active</th>
               <th className="p-2" />
             </tr>
@@ -188,6 +215,17 @@ function ClassTypesTab() {
                 <td className="p-2">
                   {i.min_confirm_count}
                   {i.min_confirm_value_cents != null && ` or ${(i.min_confirm_value_cents / 100).toFixed(0)} THB value`}
+                </td>
+                <td className="p-2">
+                  <select
+                    value={i.level}
+                    onChange={(e) => void setLevel(i, e.target.value as ClassLevel)}
+                    className="border border-sage-200 rounded-md px-1 py-0.5"
+                  >
+                    {LEVEL_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
                 </td>
                 <td className="p-2">{i.active ? "Yes" : "No"}</td>
                 <td className="p-2">
@@ -287,9 +325,9 @@ function InstructorsTab() {
 
 function SessionsTab() {
   const [items, setItems] = useState<SessionRow[]>([]);
-  const [classTypes, setClassTypes] = useState<{ id: number; name: string }[]>([]);
+  const [classTypes, setClassTypes] = useState<ClassTypeRow[]>([]);
   const [instructors, setInstructors] = useState<{ id: number; name: string }[]>([]);
-  const [form, setForm] = useState({ classTypeId: "", instructorId: "", startTime: "", endTime: "" });
+  const [form, setForm] = useState({ classTypeId: "", instructorId: "", startTime: "", endTime: "", level: "" });
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [roster, setRoster] = useState<SessionBookingRow[]>([]);
@@ -358,12 +396,18 @@ function SessionsTab() {
         instructorId: form.instructorId ? Number(form.instructorId) : null,
         startTime: new Date(form.startTime).toISOString(),
         endTime: new Date(form.endTime).toISOString(),
+        level: (form.level as ClassLevel) || null,
       });
-      setForm({ classTypeId: "", instructorId: "", startTime: "", endTime: "" });
+      setForm({ classTypeId: "", instructorId: "", startTime: "", endTime: "", level: "" });
       load();
     } catch (e) {
       setError(String(e));
     }
+  }
+
+  async function setSessionLevel(id: number, level: string) {
+    await adminApi.updateSession(id, { level: (level as ClassLevel) || null });
+    load();
   }
 
   async function cancel(id: number, reason?: string) {
@@ -445,6 +489,16 @@ function SessionsTab() {
           onChange={(e) => setForm({ ...form, endTime: e.target.value })}
           className="border border-sage-200 rounded-md px-2 py-1"
         />
+        <select
+          value={form.level}
+          onChange={(e) => setForm({ ...form, level: e.target.value })}
+          className="border border-sage-200 rounded-md px-2 py-1"
+        >
+          <option value="">Level: class default</option>
+          {LEVEL_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
         <button className="bg-sage-500 text-white px-3 py-1 rounded-md">Schedule class</button>
       </form>
 
@@ -510,6 +564,7 @@ function SessionsTab() {
           <thead className="bg-sage-100 text-left">
             <tr>
               <th className="p-2">Class</th>
+              <th className="p-2">Level</th>
               <th className="p-2">Instructor</th>
               <th className="p-2">Start</th>
               <th className="p-2">Booked</th>
@@ -519,12 +574,26 @@ function SessionsTab() {
           </thead>
           <tbody>
             {filtered.length === 0 && (
-              <tr><td colSpan={6} className="p-4 text-center text-sage-400">No sessions match these filters.</td></tr>
+              <tr><td colSpan={7} className="p-4 text-center text-sage-400">No sessions match these filters.</td></tr>
             )}
             {filtered.map((s) => (
               <Fragment key={s.id}>
                 <tr className="border-t border-sage-100 cursor-pointer" onClick={() => void toggleExpand(s.id)}>
                   <td className="p-2">{s.class_name}</td>
+                  <td className="p-2" onClick={(e) => e.stopPropagation()}>
+                    <select
+                      value={s.level_override ?? ""}
+                      onChange={(e) => void setSessionLevel(s.id, e.target.value)}
+                      className="border border-sage-200 rounded-md px-1 py-0.5"
+                    >
+                      <option value="">
+                        Default ({LEVEL_OPTIONS.find((o) => o.value === classTypes.find((ct) => ct.id === s.class_type_id)?.level)?.label ?? "—"})
+                      </option>
+                      {LEVEL_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </td>
                   <td className="p-2">{s.instructor_name ?? "—"}</td>
                   <td className="p-2">{formatDateTime(s.start_time)}</td>
                   <td className="p-2">{s.booked_count}</td>
@@ -544,7 +613,7 @@ function SessionsTab() {
                 </tr>
                 {expanded === s.id && (
                   <tr key={`${s.id}-detail`} className="border-t border-sage-100 bg-sage-50">
-                    <td colSpan={6} className="p-3">
+                    <td colSpan={7} className="p-3">
                       <p className="font-medium mb-1">Roster</p>
                       {roster.length === 0 && <p className="text-sage-400">No bookings.</p>}
                       <ul className="space-y-1 mb-3">
@@ -718,7 +787,7 @@ function WeeklyCalendar({ sessions, onSelect }: { sessions: SessionRow[]; onSele
                     >
                       <div className="font-medium">{formatDayTime(s.start_time)} {s.class_name}</div>
                       <div className="text-[11px] opacity-80">
-                        {s.instructor_name ?? "—"} · {s.booked_count}/{s.capacity_override ?? s.class_capacity}
+                        {s.instructor_name ?? "—"} · {LEVEL_SHORT[s.level]} · {s.booked_count}/{s.capacity_override ?? s.class_capacity}
                       </div>
                     </button>
                   ))}
@@ -744,8 +813,9 @@ const DAY_INDEX: Record<string, number> = {
   sunday: 6,
 };
 
-interface ImportRow extends ParsedScheduleSession {
+interface ImportRow extends Omit<ParsedScheduleSession, "level"> {
   include: boolean;
+  level: ClassLevel | ""; // "" = use the class type's level
   classTypeId: string;
   instructorName: string;
   time: string;
@@ -765,7 +835,7 @@ function ScheduleImportPanel({
   instructors,
   onImported,
 }: {
-  classTypes: { id: number; name: string }[];
+  classTypes: ClassTypeRow[];
   instructors: { id: number; name: string }[];
   onImported: () => void;
 }) {
@@ -822,6 +892,7 @@ function ScheduleImportPanel({
           instructorName: s.instructorName ?? "",
           time: s.time ?? "09:00",
           durationMinutes: s.durationMinutes ?? 60,
+          level: s.level ?? "",
         }))
       );
       if (sessions.length === 0) setError("Couldn't find any sessions in that image — try a clearer photo.");
@@ -874,11 +945,14 @@ function ScheduleImportPanel({
         if (isNaN(start.getTime())) throw new Error(`Invalid date/time for "${row.className}" (${dateStr} ${row.time})`);
         const end = new Date(start.getTime() + row.durationMinutes * 60000);
 
+        // Only store a per-session level when it differs from the class type's own level.
+        const typeLevel = classTypes.find((ct) => ct.id === Number(row.classTypeId))?.level;
         await adminApi.createSession({
           classTypeId: Number(row.classTypeId),
           instructorId,
           startTime: start.toISOString(),
           endTime: end.toISOString(),
+          level: row.level && row.level !== typeLevel ? row.level : null,
         });
       }
       setRows([]);
@@ -934,6 +1008,7 @@ function ScheduleImportPanel({
                       <th className="p-1"></th>
                       <th className="p-1">Extracted name</th>
                       <th className="p-1">Class type</th>
+                      <th className="p-1">Level</th>
                       <th className="p-1">Instructor</th>
                       <th className="p-1">Day/Date</th>
                       <th className="p-1">Time</th>
@@ -962,6 +1037,18 @@ function ScheduleImportPanel({
                               <option key={ct.id} value={ct.id}>
                                 {ct.name}
                               </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="p-1">
+                          <select
+                            value={row.level}
+                            onChange={(e) => updateRow(i, { level: e.target.value as ClassLevel | "" })}
+                            className="border border-sage-200 rounded-md px-1 py-0.5"
+                          >
+                            <option value="">Class default</option>
+                            {LEVEL_OPTIONS.map((o) => (
+                              <option key={o.value} value={o.value}>{o.label}</option>
                             ))}
                           </select>
                         </td>

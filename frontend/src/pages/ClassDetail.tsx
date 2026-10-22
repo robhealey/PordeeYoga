@@ -4,6 +4,7 @@ import { api, type ClassSession, type MemberPackage } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
 import { useLanguage } from "../lib/i18n";
 import { formatDate, formatDateTimeLong } from "../lib/dateFormat";
+import LevelBadge from "../components/LevelBadge";
 
 export function ClassDetail() {
   const { id } = useParams();
@@ -115,6 +116,7 @@ export function ClassDetail() {
         {formatDateTimeLong(session.start_time, { weekday: "long" })}
       </p>
       {session.instructor_name && <p className="text-sage-500">{t("classDetail.with", { name: session.instructor_name })}</p>}
+      <LevelBadge level={session.level} className="mt-2" />
       <p className="mt-2 text-sage-700">{t("classDetail.minutes", { n: session.duration_minutes })}</p>
       <p className="mt-1 text-sm text-sage-400">
         {isCancelled

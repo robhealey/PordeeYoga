@@ -1,3 +1,5 @@
+import type { ClassLevel } from "./api";
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api/admin${path}`, {
     ...init,
@@ -20,6 +22,7 @@ export interface ClassTypeRow {
   active: number;
   min_confirm_count: number;
   min_confirm_value_cents: number | null;
+  level: ClassLevel;
 }
 
 export interface InstructorRow {
@@ -42,6 +45,8 @@ export interface SessionRow {
   status: string;
   opened_manually: number;
   cancellation_reason: string | null;
+  level: ClassLevel; // effective level
+  level_override: ClassLevel | null; // null = class type default
   class_name: string;
   class_capacity: number;
   instructor_name: string | null;
@@ -159,6 +164,7 @@ export interface ParsedScheduleSession {
   date: string | null;
   time: string | null;
   durationMinutes: number | null;
+  level: ClassLevel | null;
 }
 
 export interface WaitlistRow {
@@ -182,6 +188,7 @@ export const adminApi = {
     currency?: string;
     minConfirmCount?: number;
     minConfirmValueCents?: number | null;
+    level?: ClassLevel;
   }) => request<{ classType: ClassTypeRow }>("/class-types", { method: "POST", body: JSON.stringify(body) }),
   updateClassType: (id: number, body: Record<string, unknown>) =>
     request<{ classType: ClassTypeRow }>(`/class-types/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
@@ -200,7 +207,10 @@ export const adminApi = {
     endTime: string;
     capacityOverride?: number | null;
     minCapacityOverride?: number | null;
+    level?: ClassLevel | null;
   }) => request<{ session: SessionRow }>("/class-sessions", { method: "POST", body: JSON.stringify(body) }),
+  updateSession: (id: number, body: { level?: ClassLevel | null }) =>
+    request<{ session: SessionRow }>(`/class-sessions/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   resetScheduleData: () =>
     request<{ ok: boolean; deletedBookings: number; deletedSessions: number }>("/reset-schedule-data", {
       method: "POST",

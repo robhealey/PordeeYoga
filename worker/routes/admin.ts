@@ -34,6 +34,7 @@ import { listWaitlistForSession } from "../lib/waitlist.ts";
 import { pushLineMessage } from "../lib/line.ts";
 import { formatDateForMessage } from "../lib/dateFormat.ts";
 import { classConfirmedMessage, notifyAssignedInstructor } from "../lib/instructors.ts";
+import { CLASS_LEVELS, type ClassLevel } from "../lib/db.ts";
 
 const admin = new Hono<AppEnv>();
 
@@ -56,13 +57,15 @@ admin.post("/class-types", async (c) => {
     currency?: string;
     minConfirmCount?: number;
     minConfirmValueCents?: number | null;
+    level?: ClassLevel;
   }>();
   if (!body.name || !body.durationMinutes || !body.capacity || body.priceCents == null) {
     return c.json({ error: "name, durationMinutes, capacity, priceCents are required" }, 400);
   }
+  if (body.level != null && !CLASS_LEVELS.includes(body.level)) return c.json({ error: "Invalid level" }, 400);
   const row = await c.env.DB.prepare(
-    `INSERT INTO class_types (name, description, duration_minutes, capacity, price_cents, currency, min_confirm_count, min_confirm_value_cents)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`
+    `INSERT INTO class_types (name, description, duration_minutes, capacity, price_cents, currency, min_confirm_count, min_confirm_value_cents, level)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`
   )
     .bind(
       body.name,
@@ -72,7 +75,8 @@ admin.post("/class-types", async (c) => {
       body.priceCents,
       body.currency ?? "THB",
       body.minConfirmCount ?? 2,
-      body.minConfirmValueCents ?? null
+      body.minConfirmValueCents ?? null,
+      body.level ?? "both"
     )
     .first();
   return c.json({ classType: row }, 201);
@@ -91,7 +95,9 @@ admin.patch("/class-types/:id", async (c) => {
     active: "active",
     minConfirmCount: "min_confirm_count",
     minConfirmValueCents: "min_confirm_value_cents",
+    level: "level",
   };
+  if ("level" in body && !CLASS_LEVELS.includes(body.level as ClassLevel)) return c.json({ error: "Invalid level" }, 400);
   const sets: string[] = [];
   const values: unknown[] = [];
   for (const [key, column] of Object.entries(fieldMap)) {
@@ -113,7 +119,8 @@ admin.patch("/class-types/:id", async (c) => {
 
 admin.get("/class-sessions", async (c) => {
   const { results } = await c.env.DB.prepare(
-    `SELECT cs.*, ct.name AS class_name, ct.capacity AS class_capacity, i.name AS instructor_name,
+    `SELECT cs.*, cs.level AS level_override, COALESCE(cs.level, ct.level) AS level,
+            ct.name AS class_name, ct.capacity AS class_capacity, i.name AS instructor_name,
             (SELECT COUNT(*) FROM bookings b WHERE b.class_session_id = cs.id AND b.status = 'confirmed') AS booked_count
      FROM class_sessions cs
      JOIN class_types ct ON ct.id = cs.class_type_id
@@ -147,6 +154,7 @@ interface ParsedScheduleSession {
   time: string | null; // HH:MM, 24h
   endTime?: string | null;
   durationMinutes: number | null;
+  level?: string | null;
 }
 
 /** Section 4 assist: admin uploads a photo of a printed/whiteboard schedule; a vision model
@@ -167,8 +175,8 @@ admin.post("/schedule-import/parse", async (c) => {
 
   const prompt = `You are reading a yoga studio's class schedule from a photo (a printed timetable, a whiteboard, or a poster).
 Extract every teacher name and every class session you can find. Respond with ONLY minified JSON, no prose, no markdown fences, matching exactly this shape:
-{"instructors":["Name", ...],"sessions":[{"className":"...","instructorName":"Name or null","dayOfWeek":"monday|tuesday|wednesday|thursday|friday|saturday|sunday or null","date":"YYYY-MM-DD or null","time":"start time exactly as printed, e.g. 9.00 or 18.40","endTime":"end time exactly as printed, e.g. 10.00, or null","durationMinutes":number or null}]}
-Every class on the image has a printed time range like "9.00 - 10.00" (dots or colons, 24h clock) directly above the class name: always copy it into "time" and "endTime", never leave them null when a time is visible. Read each day's column top to bottom and include every class in it. Use "dayOfWeek" when the schedule is a recurring weekly grid (e.g. a column headed "Monday"). Use "date" instead only if the image shows specific calendar dates. If duration isn't stated, estimate from the time range shown, else use null. If you truly cannot read the image, return {"instructors":[],"sessions":[]}.`;
+{"instructors":["Name", ...],"sessions":[{"className":"...","instructorName":"Name or null","dayOfWeek":"monday|tuesday|wednesday|thursday|friday|saturday|sunday or null","date":"YYYY-MM-DD or null","time":"start time exactly as printed, e.g. 9.00 or 18.40","endTime":"end time exactly as printed, e.g. 10.00, or null","durationMinutes":number or null,"level":"beginner|advanced|both or null"}]}
+Every class on the image has a printed time range like "9.00 - 10.00" (dots or colons, 24h clock) directly above the class name: always copy it into "time" and "endTime", never leave them null when a time is visible. Read each day's column top to bottom and include every class in it. Use "dayOfWeek" when the schedule is a recurring weekly grid (e.g. a column headed "Monday"). Use "date" instead only if the image shows specific calendar dates. Many schedules print a level marker next to each class, e.g. "(B)", "(A)" or "(B/A)", explained in a legend: (B) or Basic/Beginner means "beginner", (A) or Advanced means "advanced", and (B/A) or a mixed/both marking means "both". Copy each class's own marker into "level"; use null if a class has none. If duration isn't stated, estimate from the time range shown, else use null. If you truly cannot read the image, return {"instructors":[],"sessions":[]}.`;
 
   const mediaMatch = body.imageBase64.match(/^data:([^;,]+);base64,/);
   const mediaType = mediaMatch?.[1] ?? "image/jpeg";
@@ -259,6 +267,16 @@ Every class on the image has a printed time range like "9.00 - 10.00" (dots or c
     if (h > 23 || min > 59) return null;
     return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
   }
+  /** Normalises the model's level (or a raw marker like "B/A") to beginner/advanced/both, else null. */
+  function toLevel(v: unknown): ClassLevel | null {
+    if (typeof v !== "string") return null;
+    const l = v.toLowerCase().replace(/[()\s]/g, "");
+    if (CLASS_LEVELS.includes(l as ClassLevel)) return l as ClassLevel;
+    if (l === "b/a" || l === "a/b" || l.includes("all")) return "both";
+    if (l === "b" || l.startsWith("basic") || l.startsWith("beginner")) return "beginner";
+    if (l === "a" || l.startsWith("adv")) return "advanced";
+    return null;
+  }
   const toMinutes = (t: string | null) => (t ? parseInt(t.slice(0, 2), 10) * 60 + parseInt(t.slice(3), 10) : null);
 
   return c.json({
@@ -279,6 +297,7 @@ Every class on the image has a printed time range like "9.00 - 10.00" (dots or c
         date: cleanNullish(s.date),
         time,
         durationMinutes: derived ?? cleanNullish(s.durationMinutes),
+        level: toLevel(cleanNullish(s.level)),
       };
     }),
   });
@@ -292,13 +311,15 @@ admin.post("/class-sessions", async (c) => {
     endTime: string;
     capacityOverride?: number | null;
     minCapacityOverride?: number | null;
+    level?: ClassLevel | null;
   }>();
   if (!body.classTypeId || !body.startTime || !body.endTime) {
     return c.json({ error: "classTypeId, startTime, endTime are required" }, 400);
   }
+  if (body.level != null && !CLASS_LEVELS.includes(body.level)) return c.json({ error: "Invalid level" }, 400);
   const row = await c.env.DB.prepare(
-    `INSERT INTO class_sessions (class_type_id, instructor_id, start_time, end_time, capacity_override, min_capacity_override)
-     VALUES (?, ?, ?, ?, ?, ?) RETURNING *`
+    `INSERT INTO class_sessions (class_type_id, instructor_id, start_time, end_time, capacity_override, min_capacity_override, level)
+     VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *`
   )
     .bind(
       body.classTypeId,
@@ -306,7 +327,8 @@ admin.post("/class-sessions", async (c) => {
       body.startTime,
       body.endTime,
       body.capacityOverride ?? null,
-      body.minCapacityOverride ?? null
+      body.minCapacityOverride ?? null,
+      body.level ?? null
     )
     .first();
   return c.json({ session: row }, 201);
@@ -321,7 +343,9 @@ admin.patch("/class-sessions/:id", async (c) => {
     endTime: "end_time",
     capacityOverride: "capacity_override",
     minCapacityOverride: "min_capacity_override",
+    level: "level",
   };
+  if (body.level != null && !CLASS_LEVELS.includes(body.level as ClassLevel)) return c.json({ error: "Invalid level" }, 400);
   const sets: string[] = [];
   const values: unknown[] = [];
   for (const [key, column] of Object.entries(fieldMap)) {

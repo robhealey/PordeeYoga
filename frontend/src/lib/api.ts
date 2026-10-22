@@ -105,6 +105,8 @@ export const api = {
     }),
 };
 
+export type ClassLevel = "beginner" | "advanced" | "both";
+
 export type ClassSessionStatus = "scheduled" | "confirmed" | "full" | "cancelled_by_studio" | "completed";
 
 export interface ClassSession {
@@ -121,6 +123,7 @@ export interface ClassSession {
   spots_left: number;
   status: ClassSessionStatus;
   cancellation_reason: string | null;
+  level: ClassLevel;
   bookable_until?: string; // start time + late-booking grace period
 }
 
