@@ -13,7 +13,7 @@ renewal fee, not per class.
 - **Frontend**: React + Vite + Tailwind (`frontend/`), served by the same Worker as static assets
 - **Auth**: LINE Login (LIFF inside the LINE app, OAuth redirect in a plain browser)
 - **Payments**: Omise PromptPay QR only, pluggable for LINE Pay later
-- **Messaging**: LINE Messaging API (booking confirmations + class reminders)
+- **Messaging**: LINE Messaging API (payment confirmations, waitlist spots, studio cancellations)
 
 ## Local development
 
@@ -61,5 +61,4 @@ Business logic lives in `worker/lib/` (`packages.ts`, `bookings.ts`, `waitlist.t
 ## Scheduled jobs
 
 A cron trigger (every 15 min, see `triggers.crons` in `wrangler.jsonc`) expires abandoned package
-purchases and past-due packages, expires unclaimed waitlist offers (cascading to the next person),
-and sends LINE reminders `REMINDER_HOURS_BEFORE` a class starts.
+purchases and past-due packages, and expires unclaimed waitlist offers (cascading to the next person).

@@ -9,7 +9,6 @@ export interface Env {
   STUDIO_NAME: string;
   TIMEZONE: string;
   BOOKING_EXPIRY_MINUTES: string;
-  REMINDER_HOURS_BEFORE: string;
 
   // secrets (set via `wrangler secret put`, see worker/.dev.vars.example for local dev)
   LINE_LOGIN_CHANNEL_ID?: string;

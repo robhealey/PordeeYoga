@@ -33,7 +33,6 @@ import {
 import { listWaitlistForSession } from "../lib/waitlist.ts";
 import { pushLineMessage } from "../lib/line.ts";
 import { formatDateForMessage } from "../lib/dateFormat.ts";
-import { classConfirmedMessage, notifyAssignedInstructor } from "../lib/instructors.ts";
 import { CLASS_LEVELS, type ClassLevel } from "../lib/db.ts";
 
 const admin = new Hono<AppEnv>();
@@ -367,14 +366,12 @@ admin.patch("/class-sessions/:id", async (c) => {
 /** Section 9: force-confirm a class (e.g. Easy Yoga) even below the normal threshold. */
 admin.post("/class-sessions/:id/open-manually", async (c) => {
   const id = Number(c.req.param("id"));
-  const before = await c.env.DB.prepare("SELECT status FROM class_sessions WHERE id = ?").bind(id).first<{ status: string }>();
   const row = await c.env.DB.prepare(
     "UPDATE class_sessions SET opened_manually = 1, status = CASE WHEN status = 'scheduled' THEN 'confirmed' ELSE status END WHERE id = ? RETURNING *"
   )
     .bind(id)
     .first();
   if (!row) return c.json({ error: "Not found" }, 404);
-  if (before?.status === "scheduled") await notifyAssignedInstructor(c.env, id, classConfirmedMessage);
   return c.json({ session: row });
 });
 

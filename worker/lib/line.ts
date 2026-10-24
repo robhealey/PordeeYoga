@@ -95,7 +95,7 @@ export async function verifyLineWebhookSignature(
   return expected === signatureHeader;
 }
 
-/** Push a message to a LINE user (booking confirmations, reminders). No-ops quietly if Messaging isn't configured yet. */
+/** Push a message to a LINE user (payment confirmations, waitlist spots, studio cancellations). No-ops quietly if Messaging isn't configured yet. */
 export async function pushLineMessage(env: Env, to: string, text: string): Promise<void> {
   if (!env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN) {
     console.warn("LINE_MESSAGING_CHANNEL_ACCESS_TOKEN not configured; skipping push message");

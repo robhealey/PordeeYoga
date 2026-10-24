@@ -19,7 +19,6 @@ import {
 import { getLateBookingGraceMinutes, getSettingNumber } from "./settings.ts";
 import { notifyNextWaiting } from "./waitlist.ts";
 import { formatDateTimeForMessage } from "./dateFormat.ts";
-import { classConfirmedMessage, notifyAssignedInstructor } from "./instructors.ts";
 
 export interface BookingResult<T = { id: number }> {
   ok: boolean;
@@ -69,13 +68,10 @@ export async function recomputeSessionStatus(env: Env, classSessionId: number): 
 
   const rank = { scheduled: 0, confirmed: 1, full: 2 } as Record<string, number>;
   if (rank[next] > rank[session.status]) {
-    // Conditional on the old status so concurrent bookings only notify the instructor once.
-    const r = await env.DB.prepare("UPDATE class_sessions SET status = ? WHERE id = ? AND status = ?")
+    // Conditional on the old status so concurrent bookings can't move the status backwards.
+    await env.DB.prepare("UPDATE class_sessions SET status = ? WHERE id = ? AND status = ?")
       .bind(next, classSessionId, session.status)
       .run();
-    if (r.meta.changes && session.status === "scheduled" && new Date(session.start_time).getTime() > Date.now()) {
-      await notifyAssignedInstructor(env, classSessionId, classConfirmedMessage);
-    }
   }
 }
 
@@ -192,14 +188,6 @@ export async function createBooking(
   await startPackageClockOnFirstUse(env, mp.id);
 
   await recomputeSessionStatus(env, params.classSessionId);
-
-  const user = await env.DB.prepare("SELECT line_user_id FROM users WHERE id = ?")
-    .bind(params.userId)
-    .first<{ line_user_id: string | null }>();
-  if (user?.line_user_id) {
-    const when = formatDateTimeForMessage(session.start_time, env.TIMEZONE);
-    await pushLineMessage(env, user.line_user_id, `✅ Booking confirmed: ${session.class_name} on ${when}.`);
-  }
 
   return { ok: true, data: { id: bookingId } };
 }
@@ -432,12 +420,6 @@ export async function studioCancel(
   )
     .bind(params.classSessionId)
     .run();
-
-  await notifyAssignedInstructor(
-    env,
-    params.classSessionId,
-    (className, when) => `❌ Your class has been cancelled: ${className} on ${when}. Reason: ${reason}.`
-  );
 
   return { ok: true, data: { refundedCount: affected.length } };
 }

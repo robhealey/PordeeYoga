@@ -31,7 +31,7 @@ export function Privacy() {
       <h2 className="text-base font-semibold text-sage-800 mt-6 mb-2">How we use it</h2>
       <ul className="list-disc pl-5 space-y-1">
         <li>To manage your bookings, class credits, waitlist position, and package renewals.</li>
-        <li>To send you booking confirmations and class reminders via LINE messaging.</li>
+        <li>To send you payment confirmations, waitlist spot alerts, and class cancellation notices via LINE messaging.</li>
         <li>To process package payments and refunds through Omise.</li>
         <li>To run the studio&apos;s day-to-day operations, such as class attendance records.</li>
       </ul>

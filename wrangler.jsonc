@@ -35,7 +35,6 @@
     "DEV_MOCK_AUTH": "false",
     "STUDIO_NAME": "Pordee Yoga",
     "TIMEZONE": "Asia/Bangkok",
-    "BOOKING_EXPIRY_MINUTES": "15",
-    "REMINDER_HOURS_BEFORE": "2"
+    "BOOKING_EXPIRY_MINUTES": "15"
   }
 }
