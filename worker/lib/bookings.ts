@@ -51,9 +51,8 @@ export async function recomputeSessionStatus(env: Env, classSessionId: number): 
   if (!session) return;
   if (session.status === "cancelled_by_studio" || session.status === "completed") return;
 
-  const defaultMin = await getSettingNumber(env, "default_min_class_capacity");
   const capacity = capacityFor(session);
-  const minCapacity = minCapacityFor(session, defaultMin);
+  const minCapacity = minCapacityFor(session);
 
   let next: ClassSessionRow["status"] = session.status;
   if (session.booked_count >= capacity) {
@@ -362,8 +361,7 @@ export async function studioCancel(
   if (!session) return { ok: false, status: 404, error: "Class not found" };
   if (session.status === "cancelled_by_studio") return { ok: true, data: { refundedCount: 0 } };
 
-  const defaultMin = await getSettingNumber(env, "default_min_class_capacity");
-  const minimumNotReached = session.booked_count < minCapacityFor(session, defaultMin);
+  const minimumNotReached = session.booked_count < minCapacityFor(session);
   const reason = params.reason ?? (minimumNotReached ? "Minimum attendance not reached" : "Cancelled by studio");
   const threshold = await getSettingNumber(env, "studio_cancellations_for_extension_eligibility");
 

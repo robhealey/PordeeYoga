@@ -14,8 +14,8 @@ export interface ClassType {
   level: ClassLevel;
 }
 
-export type ClassLevel = "beginner" | "advanced" | "both";
-export const CLASS_LEVELS: ClassLevel[] = ["beginner", "advanced", "both"];
+export type ClassLevel = "basic" | "all_levels" | "beginner_to_all_levels";
+export const CLASS_LEVELS: ClassLevel[] = ["basic", "all_levels", "beginner_to_all_levels"];
 
 export type ClassSessionStatus = "scheduled" | "confirmed" | "full" | "cancelled_by_studio" | "completed";
 
@@ -79,8 +79,9 @@ export function capacityFor(session: ClassSessionRow): number {
   return session.capacity_override ?? session.class_capacity;
 }
 
-export function minCapacityFor(session: ClassSessionRow, defaultMin: number): number {
-  return session.min_capacity_override ?? defaultMin;
+/** Minimum members needed for the class to run: per-session override, else the class type's. */
+export function minCapacityFor(session: ClassSessionRow): number {
+  return session.min_capacity_override ?? session.min_confirm_count;
 }
 
 export function spotsLeft(session: ClassSessionRow): number {

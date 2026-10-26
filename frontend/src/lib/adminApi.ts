@@ -49,6 +49,7 @@ export interface SessionRow {
   level_override: ClassLevel | null; // null = class type default
   class_name: string;
   class_capacity: number;
+  min_confirm_count: number; // class type's minimum; min_capacity_override wins when set
   instructor_name: string | null;
   booked_count: number;
 }
@@ -209,7 +210,7 @@ export const adminApi = {
     minCapacityOverride?: number | null;
     level?: ClassLevel | null;
   }) => request<{ session: SessionRow }>("/class-sessions", { method: "POST", body: JSON.stringify(body) }),
-  updateSession: (id: number, body: { level?: ClassLevel | null }) =>
+  updateSession: (id: number, body: { level?: ClassLevel | null; minCapacityOverride?: number | null }) =>
     request<{ session: SessionRow }>(`/class-sessions/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   resetScheduleData: () =>
     request<{ ok: boolean; deletedBookings: number; deletedSessions: number }>("/reset-schedule-data", {

@@ -21,11 +21,11 @@ import { formatDate, formatDateOnly, formatDateTime } from "../lib/dateFormat";
 import type { ClassLevel } from "../lib/api";
 
 const LEVEL_OPTIONS: { value: ClassLevel; label: string }[] = [
-  { value: "beginner", label: "Beginner" },
-  { value: "advanced", label: "Advanced" },
-  { value: "both", label: "Both" },
+  { value: "basic", label: "Basic" },
+  { value: "all_levels", label: "All Levels" },
+  { value: "beginner_to_all_levels", label: "Beginner to All Levels" },
 ];
-const LEVEL_SHORT: Record<ClassLevel, string> = { beginner: "B", advanced: "A", both: "B/A" };
+const LEVEL_SHORT: Record<ClassLevel, string> = { basic: "Basic", all_levels: "All", beginner_to_all_levels: "Beg–All" };
 
 type Tab =
   | "sessions"
@@ -96,7 +96,7 @@ function ClassTypesTab() {
     capacity: 11,
     priceCents: 50000,
     minConfirmCount: 2,
-    level: "both" as ClassLevel,
+    level: "beginner_to_all_levels" as ClassLevel,
   });
   const [error, setError] = useState<string | null>(null);
 
@@ -110,7 +110,7 @@ function ClassTypesTab() {
     setError(null);
     try {
       await adminApi.createClassType(form);
-      setForm({ name: "", durationMinutes: 60, capacity: 11, priceCents: 50000, minConfirmCount: 2, level: "both" });
+      setForm({ name: "", durationMinutes: 60, capacity: 11, priceCents: 50000, minConfirmCount: 2, level: "beginner_to_all_levels" });
       load();
     } catch (e) {
       setError(String(e));
@@ -119,6 +119,18 @@ function ClassTypesTab() {
 
   async function setLevel(ct: ClassTypeRow, level: ClassLevel) {
     await adminApi.updateClassType(ct.id, { level });
+    load();
+  }
+
+  async function setMinMembers(ct: ClassTypeRow, value: string) {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 1 || n === ct.min_confirm_count) return load();
+    setError(null);
+    try {
+      await adminApi.updateClassType(ct.id, { minConfirmCount: n });
+    } catch (e) {
+      setError(String(e));
+    }
     load();
   }
 
@@ -159,9 +171,10 @@ function ClassTypesTab() {
           />
         </label>
         <label className="flex flex-col text-xs text-sage-500 gap-1">
-          Min bookings to confirm
+          Min members to run
           <input
             type="number"
+            min={1}
             value={form.minConfirmCount}
             onChange={(e) => setForm({ ...form, minConfirmCount: Number(e.target.value) })}
             className="w-28 border border-sage-200 rounded-md px-2 py-1 text-sm text-sage-800"
@@ -200,7 +213,7 @@ function ClassTypesTab() {
               <th className="p-2">Name</th>
               <th className="p-2">Minutes</th>
               <th className="p-2">Capacity</th>
-              <th className="p-2">Min to confirm</th>
+              <th className="p-2">Min members</th>
               <th className="p-2">Level</th>
               <th className="p-2">Active</th>
               <th className="p-2" />
@@ -213,7 +226,15 @@ function ClassTypesTab() {
                 <td className="p-2">{i.duration_minutes}</td>
                 <td className="p-2">{i.capacity}</td>
                 <td className="p-2">
-                  {i.min_confirm_count}
+                  <input
+                    key={`${i.id}-${i.min_confirm_count}`}
+                    type="number"
+                    min={1}
+                    defaultValue={i.min_confirm_count}
+                    onBlur={(e) => void setMinMembers(i, e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+                    className="w-16 border border-sage-200 rounded-md px-1 py-0.5"
+                  />
                   {i.min_confirm_value_cents != null && ` or ${(i.min_confirm_value_cents / 100).toFixed(0)} THB value`}
                 </td>
                 <td className="p-2">
@@ -410,6 +431,15 @@ function SessionsTab() {
     load();
   }
 
+  /** Blank = use the class type's minimum. */
+  async function setSessionMin(s: SessionRow, value: string) {
+    const n = value.trim() === "" ? null : Number(value);
+    if (n !== null && (!Number.isInteger(n) || n < 1)) return load();
+    if (n === s.min_capacity_override) return;
+    await adminApi.updateSession(s.id, { minCapacityOverride: n });
+    load();
+  }
+
   async function cancel(id: number, reason?: string) {
     await adminApi.cancelSession(id, reason);
     load();
@@ -568,13 +598,14 @@ function SessionsTab() {
               <th className="p-2">Instructor</th>
               <th className="p-2">Start</th>
               <th className="p-2">Booked</th>
+              <th className="p-2">Min</th>
               <th className="p-2">Status</th>
               <th className="p-2" />
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 && (
-              <tr><td colSpan={7} className="p-4 text-center text-sage-400">No sessions match these filters.</td></tr>
+              <tr><td colSpan={8} className="p-4 text-center text-sage-400">No sessions match these filters.</td></tr>
             )}
             {filtered.map((s) => (
               <Fragment key={s.id}>
@@ -597,6 +628,19 @@ function SessionsTab() {
                   <td className="p-2">{s.instructor_name ?? "—"}</td>
                   <td className="p-2">{formatDateTime(s.start_time)}</td>
                   <td className="p-2">{s.booked_count}</td>
+                  <td className="p-2" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      key={`${s.id}-${s.min_capacity_override ?? ""}`}
+                      type="number"
+                      min={1}
+                      defaultValue={s.min_capacity_override ?? ""}
+                      placeholder={String(s.min_confirm_count)}
+                      title="Minimum members for this class. Leave blank to use the class type's default."
+                      onBlur={(e) => void setSessionMin(s, e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+                      className="w-14 border border-sage-200 rounded-md px-1 py-0.5"
+                    />
+                  </td>
                   <td className="p-2">{s.status}{s.opened_manually ? " (manual)" : ""}</td>
                   <td className="p-2 space-x-2" onClick={(e) => e.stopPropagation()}>
                     {s.status !== "cancelled_by_studio" && !s.opened_manually && (
@@ -613,7 +657,7 @@ function SessionsTab() {
                 </tr>
                 {expanded === s.id && (
                   <tr key={`${s.id}-detail`} className="border-t border-sage-100 bg-sage-50">
-                    <td colSpan={7} className="p-3">
+                    <td colSpan={8} className="p-3">
                       <p className="font-medium mb-1">Roster</p>
                       {roster.length === 0 && <p className="text-sage-400">No bookings.</p>}
                       <ul className="space-y-1 mb-3">
@@ -1693,7 +1737,15 @@ function AddClassModal({
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [packageId, setPackageId] = useState("");
+  const activePackages = memberPackages.filter((mp) => mp.status === "active");
+  // Default to the usable package that expires first, so adding a member deducts a credit
+  // unless the admin deliberately picks "No package".
+  const [packageId, setPackageId] = useState(() => {
+    const usable = activePackages
+      .filter((mp) => mp.credits_total == null || mp.credits_used < mp.credits_total)
+      .sort((a, b) => (a.expires_at ?? "9999").localeCompare(b.expires_at ?? "9999"));
+    return usable[0] ? String(usable[0].id) : "";
+  });
   const [status, setStatus] = useState<"confirmed" | "attended" | "no_show">("confirmed");
   const [statusTouched, setStatusTouched] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -1706,7 +1758,6 @@ function AddClassModal({
       .catch((e) => setLoadError(String(e)));
   }, []);
 
-  const activePackages = memberPackages.filter((mp) => mp.status === "active");
   const selected = sessions?.find((s) => s.id === selectedId) ?? null;
 
   useEffect(() => {

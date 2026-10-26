@@ -105,7 +105,7 @@ export const api = {
     }),
 };
 
-export type ClassLevel = "beginner" | "advanced" | "both";
+export type ClassLevel = "basic" | "all_levels" | "beginner_to_all_levels";
 
 export type ClassSessionStatus = "scheduled" | "confirmed" | "full" | "cancelled_by_studio" | "completed";
 

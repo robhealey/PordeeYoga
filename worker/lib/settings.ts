@@ -5,7 +5,6 @@ export type SettingKey =
   | "booking_window_days"
   | "late_booking_grace_minutes"
   | "solo_spot_cancel_window_minutes"
-  | "default_min_class_capacity"
   | "default_max_class_capacity"
   | "waitlist_claim_minutes"
   | "renewal_extend_fee_cents"
