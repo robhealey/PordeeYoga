@@ -13,6 +13,7 @@ import {
 import { getAllSettings, setSetting, type SettingKey } from "../lib/settings.ts";
 import {
   activateMemberPackage,
+  computeExpiry,
   createPendingMemberPackage,
   getMemberPackage,
   getPackage,
@@ -581,6 +582,14 @@ admin.get("/members/:id", async (c) => {
   )
     .bind(id)
     .all();
+  const { results: expiryExtensions } = await c.env.DB.prepare(
+    `SELECT ee.*, a.display_name AS admin_name FROM expiry_extensions ee
+     JOIN member_packages mp ON mp.id = ee.member_package_id
+     LEFT JOIN users a ON a.id = ee.admin_user_id
+     WHERE mp.user_id = ? ORDER BY ee.created_at DESC`
+  )
+    .bind(id)
+    .all();
   const stats = await c.env.DB.prepare(
     `SELECT
        (SELECT COUNT(*) FROM bookings WHERE user_id = ?1) AS total_bookings,
@@ -596,6 +605,7 @@ admin.get("/members/:id", async (c) => {
     bookingHistory,
     birthdayCoupons,
     renewalHistory,
+    expiryExtensions,
     stats: { totalBookings: stats?.total_bookings ?? 0, bookingsLast30Days: stats?.bookings_last_30_days ?? 0 },
   });
 });
@@ -914,6 +924,35 @@ admin.post("/member-packages/:id/extend-expiry", async (c) => {
     .bind(body.newExpiresAt, id)
     .first();
   return c.json({ memberPackage: row });
+});
+
+/** Admin extends a member's package by a number of days, with a reason (e.g. illness, injury,
+ * travel). Extending an expired package past today makes it active again. */
+admin.post("/member-packages/:id/extend", async (c) => {
+  const id = Number(c.req.param("id"));
+  const body = await c.req.json<{ days?: number; reason?: string }>();
+  const days = Number(body.days);
+  const reason = body.reason?.trim().slice(0, 500);
+  if (!Number.isInteger(days) || days < 1 || days > 365) return c.json({ error: "days must be a whole number from 1 to 365" }, 400);
+  if (!reason) return c.json({ error: "A reason is required" }, 400);
+
+  const mp = await getMemberPackage(c.env, id);
+  if (!mp) return c.json({ error: "Not found" }, 404);
+  if (mp.status !== "active" && mp.status !== "expired") return c.json({ error: `Can't extend a ${mp.status} package` }, 409);
+  if (!mp.expires_at) return c.json({ error: "This package doesn't expire, so there's nothing to extend" }, 409);
+
+  const newExpiresAt = computeExpiry(mp.expires_at, days, "day");
+  const reactivate = mp.status === "expired" && newExpiresAt > new Date().toISOString();
+  const [, updated] = await c.env.DB.batch([
+    c.env.DB.prepare(
+      "INSERT INTO expiry_extensions (member_package_id, old_expires_at, new_expires_at, days, reason, admin_user_id) VALUES (?, ?, ?, ?, ?, ?)"
+    ).bind(id, mp.expires_at, newExpiresAt, days, reason, c.get("user")!.id),
+    c.env.DB.prepare(
+      `UPDATE member_packages SET expires_at = ?, extension_days = extension_days + ?${reactivate ? ", status = 'active'" : ""}
+       WHERE id = ? RETURNING *`
+    ).bind(newExpiresAt, days, id),
+  ]);
+  return c.json({ memberPackage: updated.results[0] });
 });
 
 admin.get("/member-packages/:id/renewals", async (c) => {

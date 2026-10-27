@@ -100,7 +100,19 @@ export interface MemberDetail {
   bookingHistory: { id: number; status: string; created_at: string; class_name: string; start_time: string }[];
   birthdayCoupons: { id: number; status: string; issued_at: string; expires_at: string }[];
   renewalHistory: unknown[];
+  expiryExtensions: ExpiryExtensionRow[];
   stats: { totalBookings: number; bookingsLast30Days: number };
+}
+
+export interface ExpiryExtensionRow {
+  id: number;
+  member_package_id: number;
+  old_expires_at: string;
+  new_expires_at: string;
+  days: number | null;
+  reason: string | null;
+  admin_name: string | null;
+  created_at: string;
 }
 
 export interface PackageCatalogRow {
@@ -293,6 +305,11 @@ export const adminApi = {
       body: JSON.stringify({ activationDeadline }),
     }),
   expiryExtensionFlags: () => request<{ flagged: MemberPackageRow[] }>("/member-packages/expiry-extension-flags"),
+  extendPackage: (id: number, days: number, reason: string) =>
+    request<{ memberPackage: MemberPackageRow }>(`/member-packages/${id}/extend`, {
+      method: "POST",
+      body: JSON.stringify({ days, reason }),
+    }),
   extendExpiry: (id: number, newExpiresAt: string, reason?: string) =>
     request<{ memberPackage: MemberPackageRow }>(`/member-packages/${id}/extend-expiry`, {
       method: "POST",

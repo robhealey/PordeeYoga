@@ -1160,6 +1160,9 @@ function MembersTab() {
   const [memberForm, setMemberForm] = useState({ displayName: "", phone: "", dateOfBirth: "", notes: "" });
   const [editingPkgId, setEditingPkgId] = useState<number | null>(null);
   const [pkgForm, setPkgForm] = useState({ total: "", used: "", expires: "", status: "active", activationDeadline: "" });
+  const [extendingPkgId, setExtendingPkgId] = useState<number | null>(null);
+  const [extendForm, setExtendForm] = useState({ days: "", reason: "" });
+  const [extending, setExtending] = useState(false);
   const [showAllPackages, setShowAllPackages] = useState(false);
   const [memberError, setMemberError] = useState<string | null>(null);
   const [addClassOpen, setAddClassOpen] = useState(false);
@@ -1211,6 +1214,27 @@ function MembersTab() {
       setDetail(await adminApi.getMember(detail.member.id));
     } catch (e) {
       setMemberError(String(e));
+    }
+  }
+
+  function startExtendPackage(mp: MemberPackageRow) {
+    setEditingPkgId(null);
+    setExtendingPkgId(mp.id);
+    setExtendForm({ days: "", reason: "" });
+  }
+
+  async function extendPackage(mp: MemberPackageRow) {
+    if (!detail) return;
+    setMemberError(null);
+    setExtending(true);
+    try {
+      await adminApi.extendPackage(mp.id, Number(extendForm.days), extendForm.reason.trim());
+      setExtendingPkgId(null);
+      setDetail(await adminApi.getMember(detail.member.id));
+    } catch (e) {
+      setMemberError(String(e));
+    } finally {
+      setExtending(false);
     }
   }
 
@@ -1614,9 +1638,24 @@ function MembersTab() {
                           </td>
                           <td className="p-2 italic text-sage-600">{mp.note || "—"}</td>
                           <td className="p-2 whitespace-nowrap space-x-3">
-                            <button onClick={() => (editingPkgId === mp.id ? setEditingPkgId(null) : startEditPackage(mp))} className="text-sage-600 underline">
+                            <button
+                              onClick={() => {
+                                setExtendingPkgId(null);
+                                if (editingPkgId === mp.id) setEditingPkgId(null);
+                                else startEditPackage(mp);
+                              }}
+                              className="text-sage-600 underline"
+                            >
                               {editingPkgId === mp.id ? "Close" : "Edit"}
                             </button>
+                            {(mp.status === "active" || mp.status === "expired") && mp.expires_at && (
+                              <button
+                                onClick={() => (extendingPkgId === mp.id ? setExtendingPkgId(null) : startExtendPackage(mp))}
+                                className="text-sage-600 underline"
+                              >
+                                {extendingPkgId === mp.id ? "Close" : "Extend"}
+                              </button>
+                            )}
                             <button
                               onClick={async () => {
                                 const v = window.prompt("Package note", mp.note ?? "");
@@ -1633,6 +1672,68 @@ function MembersTab() {
                             </button>
                           </td>
                         </tr>
+                        {detail.expiryExtensions
+                          .filter((x) => x.member_package_id === mp.id)
+                          .map((x) => (
+                            <tr key={`ext-${x.id}`} className="text-xs text-sage-500">
+                              <td colSpan={7} className="px-2 pb-1">
+                                ↳ Extended {x.days != null ? `+${x.days} day${x.days === 1 ? "" : "s"}` : ""} on {formatDate(x.created_at)}
+                                {" "}({formatDate(x.old_expires_at)} → {formatDate(x.new_expires_at)})
+                                {x.admin_name && <> by {x.admin_name}</>}
+                                {x.reason && <span className="italic"> — {x.reason}</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        {extendingPkgId === mp.id && mp.expires_at && (
+                          <tr className="border-t border-sage-100 bg-sage-50">
+                            <td colSpan={7} className="p-2">
+                              <form
+                                onSubmit={(e) => {
+                                  e.preventDefault();
+                                  void extendPackage(mp);
+                                }}
+                                className="flex flex-wrap gap-2 items-end"
+                              >
+                                <label className="text-xs text-sage-500">
+                                  Extend by (days)
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={365}
+                                    required
+                                    value={extendForm.days}
+                                    onChange={(e) => setExtendForm({ ...extendForm, days: e.target.value })}
+                                    className="block w-24 border border-sage-200 rounded-md px-2 py-1 text-sm text-sage-800"
+                                  />
+                                </label>
+                                <label className="text-xs text-sage-500 flex-1 min-w-48">
+                                  Reason
+                                  <input
+                                    required
+                                    maxLength={500}
+                                    placeholder="e.g. injured, away for work"
+                                    value={extendForm.reason}
+                                    onChange={(e) => setExtendForm({ ...extendForm, reason: e.target.value })}
+                                    className="block w-full border border-sage-200 rounded-md px-2 py-1 text-sm text-sage-800"
+                                  />
+                                </label>
+                                <button
+                                  disabled={extending || !(Number(extendForm.days) >= 1) || !extendForm.reason.trim()}
+                                  className="bg-sage-500 text-white px-3 py-1 rounded-md text-sm disabled:bg-sage-200"
+                                >
+                                  {extending ? "Extending…" : "Extend"}
+                                </button>
+                                {Number.isInteger(Number(extendForm.days)) && Number(extendForm.days) >= 1 && (
+                                  <p className="w-full text-xs text-sage-500">
+                                    {mp.activation_deadline && !mp.activated_at
+                                      ? `Not started yet: ${extendForm.days} extra day(s) will be added to its validity once it starts.`
+                                      : `New expiry: ${formatDate(new Date(new Date(mp.expires_at).getTime() + Number(extendForm.days) * 86_400_000))}`}
+                                  </p>
+                                )}
+                              </form>
+                            </td>
+                          </tr>
+                        )}
                         {editingPkgId === mp.id && (
                           <tr className="border-t border-sage-100 bg-sage-50">
                             <td colSpan={7} className="p-2">

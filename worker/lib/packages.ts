@@ -37,6 +37,7 @@ export interface MemberPackageRow {
   combined_from_member_package_id: number | null;
   note: string | null;
   activation_deadline: string | null; // YYYY-MM-DD, studio-local
+  extension_days: number; // total days added by admin extensions
 }
 
 export async function listActivePackages(env: Env): Promise<PackageRow[]> {
@@ -200,16 +201,13 @@ export async function activateMemberPackage(env: Env, memberPackageId: number): 
   if (mp.activation_deadline) {
     // Admin set an activation deadline before payment: the clock waits for first use.
     await env.DB.prepare("UPDATE member_packages SET status = 'active', activated_at = NULL, expires_at = ? WHERE id = ?")
-      .bind(provisionalExpiry(pkg, mp.activation_deadline, env.TIMEZONE), memberPackageId)
+      .bind(provisionalExpiry(pkg, mp.activation_deadline, env.TIMEZONE, mp.extension_days), memberPackageId)
       .run();
     return;
   }
 
   const activatedAt = new Date().toISOString();
-  const expiresAt =
-    pkg.validity_value != null && pkg.validity_unit
-      ? computeExpiry(activatedAt, pkg.validity_value, pkg.validity_unit)
-      : null;
+  const expiresAt = validityExpiry(pkg, activatedAt, mp.extension_days);
 
   await env.DB.prepare(
     "UPDATE member_packages SET status = 'active', activated_at = ?, expires_at = ? WHERE id = ?"
@@ -231,10 +229,14 @@ export function endOfLocalDayIso(date: string, timeZone: string): string {
 }
 
 /** Expiry if a package's clock starts at its activation deadline (i.e. it's never used before then). */
-export function provisionalExpiry(pkg: PackageRow, activationDeadline: string, timeZone: string): string | null {
-  return pkg.validity_value != null && pkg.validity_unit
-    ? computeExpiry(endOfLocalDayIso(activationDeadline, timeZone), pkg.validity_value, pkg.validity_unit)
-    : null;
+export function provisionalExpiry(pkg: PackageRow, activationDeadline: string, timeZone: string, extensionDays = 0): string | null {
+  return validityExpiry(pkg, endOfLocalDayIso(activationDeadline, timeZone), extensionDays);
+}
+
+/** Expiry of a package whose clock starts at `fromIso`, plus any admin-granted extension days. */
+export function validityExpiry(pkg: PackageRow, fromIso: string, extensionDays = 0): string | null {
+  if (pkg.validity_value == null || !pkg.validity_unit) return null;
+  return computeExpiry(computeExpiry(fromIso, pkg.validity_value, pkg.validity_unit), extensionDays, "day");
 }
 
 /** First use of a package that's waiting on its activation deadline: start the validity clock
@@ -246,8 +248,7 @@ export async function startPackageClockOnFirstUse(env: Env, memberPackageId: num
   if (!pkg) return;
   const deadlineEnd = endOfLocalDayIso(mp.activation_deadline, env.TIMEZONE);
   const startedAt = new Date().toISOString() < deadlineEnd ? new Date().toISOString() : deadlineEnd;
-  const expiresAt =
-    pkg.validity_value != null && pkg.validity_unit ? computeExpiry(startedAt, pkg.validity_value, pkg.validity_unit) : null;
+  const expiresAt = validityExpiry(pkg, startedAt, mp.extension_days);
   await env.DB.prepare(
     "UPDATE member_packages SET activated_at = ?, expires_at = ? WHERE id = ? AND activated_at IS NULL"
   )
@@ -288,12 +289,11 @@ export async function setActivationDeadline(
       }
     }
     await env.DB.prepare("UPDATE member_packages SET activation_deadline = ?, activated_at = NULL, expires_at = ? WHERE id = ?")
-      .bind(deadline, provisionalExpiry(pkg, deadline, env.TIMEZONE), mp.id)
+      .bind(deadline, provisionalExpiry(pkg, deadline, env.TIMEZONE, mp.extension_days), mp.id)
       .run();
   } else if (!mp.activated_at && mp.activation_deadline) {
     const now = new Date().toISOString();
-    const expiresAt =
-      pkg.validity_value != null && pkg.validity_unit ? computeExpiry(now, pkg.validity_value, pkg.validity_unit) : null;
+    const expiresAt = validityExpiry(pkg, now, mp.extension_days);
     await env.DB.prepare("UPDATE member_packages SET activation_deadline = NULL, activated_at = ?, expires_at = ? WHERE id = ?")
       .bind(now, expiresAt, mp.id)
       .run();
