@@ -419,6 +419,21 @@ export async function studioCancel(
     .bind(params.classSessionId)
     .run();
 
+  if (session.instructor_id) {
+    const instructor = await env.DB.prepare(
+      "SELECT u.line_user_id FROM instructors i JOIN users u ON u.id = i.user_id WHERE i.id = ?"
+    )
+      .bind(session.instructor_id)
+      .first<{ line_user_id: string | null }>();
+    if (instructor?.line_user_id) {
+      await pushLineMessage(
+        env,
+        instructor.line_user_id,
+        `⚠️ Your class ${session.class_name} on ${formatDateTimeForMessage(session.start_time, env.TIMEZONE)} has been cancelled. Reason: ${reason}`
+      );
+    }
+  }
+
   return { ok: true, data: { refundedCount: affected.length } };
 }
 
