@@ -175,6 +175,7 @@ export interface PackageCatalogItem {
   shared: number;
   one_time_per_person: number;
   active: number;
+  sale_ends_at: string | null; // UTC ISO; promo stops selling after this
 }
 
 export interface MemberPackage {

@@ -216,6 +216,7 @@ function ClassTypesTab() {
               <th className="p-2">Min members</th>
               <th className="p-2">Level</th>
               <th className="p-2">Active</th>
+              <th className="p-2">Sale ends</th>
               <th className="p-2" />
             </tr>
           </thead>
@@ -2053,7 +2054,15 @@ const EMPTY_PACKAGE_FORM = {
   shared: false,
   oneTimePerPerson: false,
   sortOrder: "0",
+  saleEndsAt: "", // Thailand wall-clock "YYYY-MM-DDTHH:mm"; empty = no deadline
 };
+
+const BANGKOK_OFFSET_MS = 7 * 60 * 60 * 1000;
+
+/** UTC ISO -> "YYYY-MM-DDTHH:mm" in Thailand time, for a datetime-local input. */
+function toBangkokInput(iso: string): string {
+  return new Date(new Date(iso).getTime() + BANGKOK_OFFSET_MS).toISOString().slice(0, 16);
+}
 
 function packageToForm(p: PackageCatalogRow): typeof EMPTY_PACKAGE_FORM {
   return {
@@ -2069,6 +2078,7 @@ function packageToForm(p: PackageCatalogRow): typeof EMPTY_PACKAGE_FORM {
     shared: !!p.shared,
     oneTimePerPerson: !!p.one_time_per_person,
     sortOrder: String(p.sort_order ?? 0),
+    saleEndsAt: p.sale_ends_at ? toBangkokInput(p.sale_ends_at) : "",
   };
 }
 
@@ -2092,6 +2102,17 @@ function PackageCatalogTab() {
   async function toggleActive(p: PackageCatalogRow) {
     await adminApi.updatePackage(p.id, { active: p.active ? 0 : 1 });
     load();
+  }
+
+  async function remove(p: PackageCatalogRow) {
+    if (!confirm(`Remove "${p.name}" from the package list? Members who already bought it can keep using it until it expires.`)) return;
+    try {
+      await adminApi.deletePackage(p.id);
+      if (editing === p.id) setEditing(null);
+      load();
+    } catch (err) {
+      alert(String(err));
+    }
   }
 
   function open(target: PackageCatalogRow | "new") {
@@ -2128,6 +2149,7 @@ function PackageCatalogTab() {
       shared: form.shared ? 1 : 0,
       oneTimePerPerson: form.oneTimePerPerson ? 1 : 0,
       sortOrder: optionalInt(form.sortOrder) ?? 0,
+      saleEndsAt: form.saleEndsAt || null,
     };
     setSaving(true);
     try {
@@ -2183,6 +2205,17 @@ function PackageCatalogTab() {
             <label className="text-xs text-sage-500">
               Sort order
               <input type="number" value={form.sortOrder} onChange={(e) => setForm({ ...form, sortOrder: e.target.value })} className={`${input} w-20`} />
+            </label>
+            <label className="text-xs text-sage-500">
+              Sale ends (Thailand time)
+              <span className="flex gap-1 items-center">
+                <input type="datetime-local" value={form.saleEndsAt} onChange={(e) => setForm({ ...form, saleEndsAt: e.target.value })} className={input} />
+                {form.saleEndsAt && (
+                  <button type="button" onClick={() => setForm({ ...form, saleEndsAt: "" })} className="text-sage-600 underline">
+                    clear
+                  </button>
+                )}
+              </span>
             </label>
           </div>
           <div className="flex flex-wrap gap-4 text-sm">
@@ -2263,12 +2296,25 @@ function PackageCatalogTab() {
                 <td className="p-2">{p.renewable ? "Yes" : "No"}</td>
                 <td className="p-2">{p.shared ? "Yes" : "No"}</td>
                 <td className="p-2">{p.active ? "Yes" : "No"}</td>
+                <td className="p-2 whitespace-nowrap">
+                  {p.sale_ends_at ? (
+                    <span className={new Date(p.sale_ends_at) <= new Date() ? "text-sage-400" : ""}>
+                      {formatDateTime(p.sale_ends_at, { timeZone: "Asia/Bangkok" })}
+                      {new Date(p.sale_ends_at) <= new Date() && " · ended"}
+                    </span>
+                  ) : (
+                    "—"
+                  )}
+                </td>
                 <td className="p-2 whitespace-nowrap space-x-3">
                   <button onClick={() => open(p)} className="text-sage-600 hover:underline">
                     Edit
                   </button>
                   <button onClick={() => void toggleActive(p)} className="text-sage-600 hover:underline">
                     {p.active ? "Deactivate" : "Activate"}
+                  </button>
+                  <button onClick={() => void remove(p)} className="text-red-600 hover:underline">
+                    Delete
                   </button>
                 </td>
               </tr>

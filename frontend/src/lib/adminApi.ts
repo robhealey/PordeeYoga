@@ -131,6 +131,7 @@ export interface PackageCatalogRow {
   one_time_per_person: number;
   active: number;
   sort_order: number;
+  sale_ends_at: string | null; // UTC ISO
 }
 
 export interface MemberPackageRow {
@@ -275,6 +276,7 @@ export const adminApi = {
     request<{ package: PackageCatalogRow }>("/packages", { method: "POST", body: JSON.stringify(body) }),
   updatePackage: (id: number, body: Record<string, unknown>) =>
     request<{ package: PackageCatalogRow }>(`/packages/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deletePackage: (id: number) => request<{ ok: true }>(`/packages/${id}`, { method: "DELETE" }),
 
   listMemberPackages: (params?: { userId?: number; status?: string }) => {
     const q = new URLSearchParams();

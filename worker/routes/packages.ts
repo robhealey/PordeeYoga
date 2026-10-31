@@ -5,6 +5,7 @@ import {
   createPendingMemberPackage,
   getPackage,
   hasUsedOneTimePackage,
+  isPurchasable,
   listActivePackages,
   listMemberPackagesForUser,
   listUsablePackagesForUser,
@@ -73,7 +74,8 @@ packages.post("/purchase", requireUser, async (c) => {
   if (!Number.isInteger(body.packageId)) return c.json({ error: "packageId is required" }, 400);
 
   const pkg = await getPackage(c.env, body.packageId);
-  if (!pkg || !pkg.active) return c.json({ error: "Package not found" }, 404);
+  if (!pkg || pkg.deleted_at) return c.json({ error: "Package not found" }, 404);
+  if (!isPurchasable(pkg)) return c.json({ error: "This package is no longer available for purchase" }, 410);
 
   if (pkg.one_time_per_person) {
     const fullName = body.trialFullName ?? user.display_name;

@@ -16,6 +16,14 @@ export interface PackageRow {
   shared: number;
   one_time_per_person: number;
   active: number;
+  sale_ends_at: string | null; // UTC ISO; no new purchases after this
+  deleted_at: string | null; // soft-deleted from the catalog
+}
+
+/** Whether new purchases are allowed. Inactive, soft-deleted or past-deadline packages stay usable
+ * for members who already own them; only buying is blocked. */
+export function isPurchasable(pkg: PackageRow, now = new Date()): boolean {
+  return !!pkg.active && !pkg.deleted_at && (!pkg.sale_ends_at || new Date(pkg.sale_ends_at) > now);
 }
 
 export interface MemberPackageRow {
@@ -42,8 +50,12 @@ export interface MemberPackageRow {
 
 export async function listActivePackages(env: Env): Promise<PackageRow[]> {
   const { results } = await env.DB.prepare(
-    "SELECT * FROM packages WHERE active = 1 ORDER BY sort_order ASC"
-  ).all<PackageRow>();
+    `SELECT * FROM packages
+     WHERE active = 1 AND deleted_at IS NULL AND (sale_ends_at IS NULL OR sale_ends_at > ?)
+     ORDER BY sort_order ASC`
+  )
+    .bind(new Date().toISOString())
+    .all<PackageRow>();
   return results;
 }
 

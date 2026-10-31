@@ -4,7 +4,7 @@ import { api, type BirthdayCoupon, type MemberPackage, type PackageCatalogItem }
 import { useAuth } from "../lib/AuthContext";
 import { LoginPrompt } from "../components/LoginPrompt";
 import { useLanguage } from "../lib/i18n";
-import { formatDate } from "../lib/dateFormat";
+import { formatDate, formatDateTime } from "../lib/dateFormat";
 
 function formatMoney(cents: number, currency: string) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
@@ -80,6 +80,7 @@ export function Packages() {
   const [busyId, setBusyId] = useState<number | null>(null);
   const [notes, setNotes] = useState<Record<number, string>>({});
   const [renewFor, setRenewFor] = useState<MemberPackage | null>(null);
+  const [showPast, setShowPast] = useState(false);
   const statusLabel: Record<string, string> = {
     pending_payment: t("packageStatus.pending_payment"),
     paid_not_activated: t("packageStatus.paid_not_activated"),
@@ -175,6 +176,11 @@ export function Packages() {
                   <span className="text-sage-600 text-sm">{formatMoney(pkg.price_cents, pkg.currency)}</span>
                 </div>
                 <p className="text-sm text-sage-500 mt-1">{validity(pkg)}</p>
+                {pkg.sale_ends_at && (
+                  <p className="text-xs text-amber-700 mt-1">
+                    {t("packages.saleEnds", { date: formatDateTime(pkg.sale_ends_at, { timeZone: "Asia/Bangkok" }) })}
+                  </p>
+                )}
               </div>
             ))}
           </div>
@@ -186,6 +192,9 @@ export function Packages() {
   const activeMine = (mine ?? []).filter((mp) => mp.status === "active");
   const [primaryActive, ...otherActive] = activeMine;
   const historyMine = (mine ?? []).filter((mp) => mp.status !== "active");
+  const isPast = (mp: MemberPackage) => mp.status === "expired" || mp.status === "combined" || mp.status === "cancelled";
+  const pastCount = historyMine.filter(isPast).length;
+  const visibleHistory = showPast ? historyMine : historyMine.filter((mp) => !isPast(mp));
   const activePackageIds = new Set(activeMine.map((mp) => mp.package_id));
 
   return (
@@ -277,9 +286,16 @@ export function Packages() {
 
       {historyMine.length > 0 && (
         <section className="mb-8">
-          <h2 className="font-medium mb-2 text-sage-500 text-sm">{t("packages.otherPackages")}</h2>
+          <div className="flex justify-between items-center mb-2">
+            <h2 className="font-medium text-sage-500 text-sm">{t("packages.otherPackages")}</h2>
+            {pastCount > 0 && (
+              <button onClick={() => setShowPast((v) => !v)} className="text-sm text-sage-600 underline">
+                {showPast ? t("packages.hideHistory") : t("packages.showHistory", { count: pastCount })}
+              </button>
+            )}
+          </div>
           <div className="space-y-2">
-            {historyMine.map((mp) => (
+            {visibleHistory.map((mp) => (
               <div key={mp.id} className="border border-sage-200 rounded-lg p-3 bg-white flex justify-between items-center">
                 <div>
                   <p className="font-medium">{mp.package_name}{mp.note && <span className="font-normal text-sage-600 italic"> · “{mp.note}”</span>}</p>
@@ -347,6 +363,11 @@ export function Packages() {
                   <span className="text-sage-600 text-sm">{formatMoney(pkg.price_cents, pkg.currency)}</span>
                 </div>
                 <p className="text-sm text-sage-500 mt-1">{validity(pkg)}</p>
+                {pkg.sale_ends_at && (
+                  <p className="text-xs text-amber-700 mt-1">
+                    {t("packages.saleEnds", { date: formatDateTime(pkg.sale_ends_at, { timeZone: "Asia/Bangkok" }) })}
+                  </p>
+                )}
                 {pkg.shared === 1 && <p className="text-xs text-sage-400 mt-1">{t("packages.sharedPool")}</p>}
 
                 {ownedCount > 0 && !signedUp && (

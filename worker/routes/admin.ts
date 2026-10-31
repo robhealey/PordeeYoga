@@ -671,18 +671,30 @@ admin.post("/members/:id/birthday-coupon", async (c) => {
 // -- Package catalog (section 3) --------------------------------------------------
 
 admin.get("/packages", async (c) => {
-  const { results } = await c.env.DB.prepare("SELECT * FROM packages ORDER BY sort_order ASC").all();
+  const { results } = await c.env.DB.prepare(
+    "SELECT * FROM packages WHERE deleted_at IS NULL ORDER BY sort_order ASC"
+  ).all();
   return c.json({ packages: results });
 });
+
+/** Admin enters the sale deadline as Thailand wall-clock time ("YYYY-MM-DDTHH:mm", GMT+7). */
+function parseSaleEndsAt(v: unknown): { ok: true; value: string | null } | { ok: false } {
+  if (v == null || v === "") return { ok: true, value: null };
+  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(v)) return { ok: false };
+  const d = new Date(`${v}:00+07:00`);
+  return Number.isNaN(d.getTime()) ? { ok: false } : { ok: true, value: d.toISOString() };
+}
 
 admin.post("/packages", async (c) => {
   const body = await c.req.json<Record<string, unknown>>();
   if (!body.name || body.priceCents == null) return c.json({ error: "name and priceCents are required" }, 400);
+  const saleEndsAt = parseSaleEndsAt(body.saleEndsAt);
+  if (!saleEndsAt.ok) return c.json({ error: "saleEndsAt must be YYYY-MM-DDTHH:mm (Thailand time)" }, 400);
   const row = await c.env.DB.prepare(
     `INSERT INTO packages
        (name, price_cents, currency, credits, validity_value, validity_unit, eligible_class_type_ids,
-        eligible_days, max_bookings_per_day, renewable, shared, one_time_per_person, active, sort_order)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`
+        eligible_days, max_bookings_per_day, renewable, shared, one_time_per_person, active, sort_order, sale_ends_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`
   )
     .bind(
       body.name,
@@ -698,7 +710,8 @@ admin.post("/packages", async (c) => {
       body.shared ? 1 : 0,
       body.oneTimePerPerson ? 1 : 0,
       body.active === false ? 0 : 1,
-      body.sortOrder ?? 0
+      body.sortOrder ?? 0,
+      saleEndsAt.value
     )
     .first();
   return c.json({ package: row }, 201);
@@ -737,13 +750,32 @@ admin.patch("/packages/:id", async (c) => {
     sets.push("eligible_days = ?");
     values.push(body.eligibleDays ? JSON.stringify(body.eligibleDays) : null);
   }
+  if ("saleEndsAt" in body) {
+    const saleEndsAt = parseSaleEndsAt(body.saleEndsAt);
+    if (!saleEndsAt.ok) return c.json({ error: "saleEndsAt must be YYYY-MM-DDTHH:mm (Thailand time)" }, 400);
+    sets.push("sale_ends_at = ?");
+    values.push(saleEndsAt.value);
+  }
   if (sets.length === 0) return c.json({ error: "No fields to update" }, 400);
   values.push(id);
-  const row = await c.env.DB.prepare(`UPDATE packages SET ${sets.join(", ")} WHERE id = ? RETURNING *`)
+  const row = await c.env.DB.prepare(`UPDATE packages SET ${sets.join(", ")} WHERE id = ? AND deleted_at IS NULL RETURNING *`)
     .bind(...values)
     .first();
   if (!row) return c.json({ error: "Not found" }, 404);
   return c.json({ package: row });
+});
+
+/** Soft delete: the package leaves the catalog and can't be bought, but the row stays so members who
+ * own it keep using it until it expires and their history still shows its name. */
+admin.delete("/packages/:id", async (c) => {
+  const id = Number(c.req.param("id"));
+  const r = await c.env.DB.prepare(
+    "UPDATE packages SET deleted_at = ?, active = 0 WHERE id = ? AND deleted_at IS NULL"
+  )
+    .bind(new Date().toISOString(), id)
+    .run();
+  if (!r.meta.changes) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true });
 });
 
 // -- Member packages: manual grants, expiry extensions, renewals (sections 3, 13, 17-18) --
@@ -789,7 +821,7 @@ admin.post("/member-packages", async (c) => {
     return c.json({ error: "paidAt must be a YYYY-MM-DD date" }, 400);
   }
   const pkg = await getPackage(c.env, body.packageId);
-  if (!pkg) return c.json({ error: "Package not found" }, 404);
+  if (!pkg || pkg.deleted_at) return c.json({ error: "Package not found" }, 404);
 
   const mp = await createPendingMemberPackage(c.env, body.userId, pkg, undefined, body.note);
   if (body.activationDeadline) {
