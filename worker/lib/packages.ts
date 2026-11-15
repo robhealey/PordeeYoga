@@ -219,7 +219,7 @@ export async function activateMemberPackage(env: Env, memberPackageId: number): 
   }
 
   const activatedAt = new Date().toISOString();
-  const expiresAt = validityExpiry(pkg, activatedAt, mp.extension_days);
+  const expiresAt = validityExpiry(pkg, activatedAt, env.TIMEZONE, mp.extension_days);
 
   await env.DB.prepare(
     "UPDATE member_packages SET status = 'active', activated_at = ?, expires_at = ? WHERE id = ?"
@@ -242,13 +242,31 @@ export function endOfLocalDayIso(date: string, timeZone: string): string {
 
 /** Expiry if a package's clock starts at its activation deadline (i.e. it's never used before then). */
 export function provisionalExpiry(pkg: PackageRow, activationDeadline: string, timeZone: string, extensionDays = 0): string | null {
-  return validityExpiry(pkg, endOfLocalDayIso(activationDeadline, timeZone), extensionDays);
+  return validityExpiry(pkg, endOfLocalDayIso(activationDeadline, timeZone), timeZone, extensionDays);
 }
 
-/** Expiry of a package whose clock starts at `fromIso`, plus any admin-granted extension days. */
-export function validityExpiry(pkg: PackageRow, fromIso: string, extensionDays = 0): string | null {
+/** Last studio-local date (YYYY-MM-DD) a package is valid, counting the start date as day one:
+ * N months → the day before the same date N months later (12 Nov → 11 Dec); N days → start + N − 1.
+ * If the target month is too short for that (e.g. starting 31 Jan), it ends on that month's last day. */
+export function packageLastValidDate(startDate: string, validityValue: number, validityUnit: "day" | "month"): string {
+  const [y, m, d] = startDate.split("-").map(Number);
+  let end: Date;
+  if (validityUnit === "day") {
+    end = new Date(Date.UTC(y, m - 1, d + validityValue - 1));
+  } else {
+    const daysInTarget = new Date(Date.UTC(y, m - 1 + validityValue + 1, 0)).getUTCDate();
+    // Day 0 rolls back to the previous month's last day (a package starting on the 1st).
+    end = new Date(Date.UTC(y, m - 1 + validityValue, Math.min(d - 1, daysInTarget)));
+  }
+  return end.toISOString().slice(0, 10);
+}
+
+/** Expiry of a package whose clock starts at `fromIso`: the end of its last valid studio-local day,
+ * plus any admin-granted extension days. */
+export function validityExpiry(pkg: PackageRow, fromIso: string, timeZone: string, extensionDays = 0): string | null {
   if (pkg.validity_value == null || !pkg.validity_unit) return null;
-  return computeExpiry(computeExpiry(fromIso, pkg.validity_value, pkg.validity_unit), extensionDays, "day");
+  const lastDate = packageLastValidDate(dateOnlyInTz(fromIso, timeZone), pkg.validity_value, pkg.validity_unit);
+  return computeExpiry(endOfLocalDayIso(lastDate, timeZone), extensionDays, "day");
 }
 
 /** First use of a package that's waiting on its activation deadline: start the validity clock
@@ -260,7 +278,7 @@ export async function startPackageClockOnFirstUse(env: Env, memberPackageId: num
   if (!pkg) return;
   const deadlineEnd = endOfLocalDayIso(mp.activation_deadline, env.TIMEZONE);
   const startedAt = new Date().toISOString() < deadlineEnd ? new Date().toISOString() : deadlineEnd;
-  const expiresAt = validityExpiry(pkg, startedAt, mp.extension_days);
+  const expiresAt = validityExpiry(pkg, startedAt, env.TIMEZONE, mp.extension_days);
   await env.DB.prepare(
     "UPDATE member_packages SET activated_at = ?, expires_at = ? WHERE id = ? AND activated_at IS NULL"
   )
@@ -305,7 +323,7 @@ export async function setActivationDeadline(
       .run();
   } else if (!mp.activated_at && mp.activation_deadline) {
     const now = new Date().toISOString();
-    const expiresAt = validityExpiry(pkg, now, mp.extension_days);
+    const expiresAt = validityExpiry(pkg, now, env.TIMEZONE, mp.extension_days);
     await env.DB.prepare("UPDATE member_packages SET activation_deadline = NULL, activated_at = ?, expires_at = ? WHERE id = ?")
       .bind(now, expiresAt, mp.id)
       .run();

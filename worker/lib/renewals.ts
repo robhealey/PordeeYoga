@@ -1,5 +1,5 @@
 import type { Env } from "../env.d.ts";
-import { computeExpiry, getMemberPackage, getPackage, remainingCredits, type MemberPackageRow } from "./packages.ts";
+import { computeExpiry, getMemberPackage, getPackage, remainingCredits, validityExpiry, type MemberPackageRow } from "./packages.ts";
 import { getSettingNumber } from "./settings.ts";
 
 export interface RenewalResult<T = unknown> {
@@ -117,7 +117,7 @@ export async function activateAndMaybeCombine(
   if (!pkg) return { ok: false, status: 404, error: "Package catalog entry not found" };
 
   const now = new Date().toISOString();
-  const ownExpiresAt = pkg.validity_value != null && pkg.validity_unit ? computeExpiry(now, pkg.validity_value, pkg.validity_unit) : null;
+  const ownExpiresAt = validityExpiry(pkg, now, env.TIMEZONE, mp.extension_days);
 
   if (!mp.combined_from_member_package_id) {
     await env.DB.prepare(
