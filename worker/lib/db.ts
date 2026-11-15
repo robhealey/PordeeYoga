@@ -51,8 +51,8 @@ const SESSION_LIST_SELECT = `
     ct.name AS class_name, ct.price_cents, ct.currency, ct.duration_minutes,
     ct.capacity AS class_capacity, ct.min_confirm_count, ct.min_confirm_value_cents,
     i.name AS instructor_name,
-    (SELECT COUNT(*) FROM bookings b WHERE b.class_session_id = cs.id AND b.status = 'confirmed') AS booked_count,
-    (SELECT COALESCE(SUM(b.credit_value_cents), 0) FROM bookings b WHERE b.class_session_id = cs.id AND b.status = 'confirmed') AS booked_value_cents
+    (SELECT COUNT(*) FROM bookings b WHERE b.class_session_id = cs.id AND b.status IN ('confirmed', 'attended')) AS booked_count,
+    (SELECT COALESCE(SUM(b.credit_value_cents), 0) FROM bookings b WHERE b.class_session_id = cs.id AND b.status IN ('confirmed', 'attended')) AS booked_value_cents
   FROM class_sessions cs
   JOIN class_types ct ON ct.id = cs.class_type_id
   LEFT JOIN instructors i ON i.id = cs.instructor_id

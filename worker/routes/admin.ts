@@ -135,7 +135,7 @@ admin.get("/class-sessions", async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT cs.*, cs.level AS level_override, COALESCE(cs.level, ct.level) AS level,
             ct.name AS class_name, ct.capacity AS class_capacity, ct.min_confirm_count, i.name AS instructor_name,
-            (SELECT COUNT(*) FROM bookings b WHERE b.class_session_id = cs.id AND b.status = 'confirmed') AS booked_count
+            (SELECT COUNT(*) FROM bookings b WHERE b.class_session_id = cs.id AND b.status IN ('confirmed', 'attended')) AS booked_count
      FROM class_sessions cs
      JOIN class_types ct ON ct.id = cs.class_type_id
      LEFT JOIN instructors i ON i.id = cs.instructor_id
@@ -406,8 +406,9 @@ admin.post("/class-sessions/:id/cancel", async (c) => {
 admin.get("/class-sessions/:id/bookings", async (c) => {
   const id = Number(c.req.param("id"));
   const { results } = await c.env.DB.prepare(
-    `SELECT b.*, u.display_name AS user_name, u.phone, p.name AS package_name
+    `SELECT b.*, u.display_name AS user_name, u.phone, p.name AS package_name, ab.display_name AS added_by_name
      FROM bookings b JOIN users u ON u.id = b.user_id
+     LEFT JOIN users ab ON ab.id = b.added_by_user_id
      LEFT JOIN member_packages mp ON mp.id = b.member_package_id
      LEFT JOIN packages p ON p.id = mp.package_id
      WHERE b.class_session_id = ? ORDER BY b.created_at ASC`
@@ -568,8 +569,10 @@ admin.get("/members/:id", async (c) => {
     .bind(id)
     .all();
   const { results: bookingHistory } = await c.env.DB.prepare(
-    `SELECT b.id, b.status, b.created_at, ct.name AS class_name, cs.start_time
+    `SELECT b.id, b.status, b.created_at, b.added_retroactively, ab.display_name AS added_by_name,
+            ct.name AS class_name, cs.start_time
      FROM bookings b JOIN class_sessions cs ON cs.id = b.class_session_id JOIN class_types ct ON ct.id = cs.class_type_id
+     LEFT JOIN users ab ON ab.id = b.added_by_user_id
      WHERE b.user_id = ? ORDER BY cs.start_time DESC LIMIT 100`
   )
     .bind(id)
@@ -656,6 +659,7 @@ admin.post("/members/:id/bookings", async (c) => {
     classSessionId: body.classSessionId,
     memberPackageId: body.memberPackageId ?? null,
     status,
+    adminUserId: c.get("user")!.id,
   });
   if (!result.ok) return c.json({ error: result.error }, (result.status ?? 400) as 400 | 403 | 404 | 409);
   return c.json(result.data, 201);
@@ -1144,10 +1148,11 @@ admin.patch("/settings", async (c) => {
 
 admin.get("/bookings", async (c) => {
   const { results } = await c.env.DB.prepare(
-    `SELECT b.id, b.status, b.created_at, u.display_name AS user_name,
-            ct.name AS class_name, cs.start_time
+    `SELECT b.id, b.status, b.created_at, b.added_retroactively, ab.display_name AS added_by_name,
+            u.display_name AS user_name, ct.name AS class_name, cs.start_time
      FROM bookings b
      JOIN users u ON u.id = b.user_id
+     LEFT JOIN users ab ON ab.id = b.added_by_user_id
      JOIN class_sessions cs ON cs.id = b.class_session_id
      JOIN class_types ct ON ct.id = cs.class_type_id
      ORDER BY b.created_at DESC LIMIT 200`

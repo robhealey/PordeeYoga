@@ -54,7 +54,7 @@ classes.get("/:id/attendees", requireUser, async (c) => {
     `SELECT u.id AS user_id, u.display_name, b.member_package_id, mp.note
      FROM bookings b JOIN users u ON u.id = b.user_id
      LEFT JOIN member_packages mp ON mp.id = b.member_package_id
-     WHERE b.class_session_id = ? AND b.status = 'confirmed' ORDER BY b.created_at ASC`
+     WHERE b.class_session_id = ? AND b.status IN ('confirmed', 'attended') ORDER BY b.created_at ASC`
   )
     .bind(id)
     .all<{ user_id: number; display_name: string; member_package_id: number | null; note: string | null }>();

@@ -2,6 +2,8 @@ import { Fragment, useEffect, useState } from "react";
 import { PromptModal } from "../components/PromptModal";
 import {
   adminApi,
+  adminBookingStatusLabel,
+  bookingAddedByText,
   type AdminBookingRow,
   type AdminPaymentRow,
   type ClassTypeRow,
@@ -665,13 +667,18 @@ function SessionsTab() {
                         {roster.map((b) => (
                           <li key={b.id} className="flex justify-between items-center">
                             <span>
-                              {b.user_name} {b.phone && `· ${b.phone}`} {b.package_name && `· ${b.package_name}`} — {b.status}
+                              {b.user_name} {b.phone && `· ${b.phone}`} {b.package_name && `· ${b.package_name}`} — {adminBookingStatusLabel(b)}
+                              {bookingAddedByText(b, formatDateTime) && (
+                                <span className="text-xs text-sage-400"> ({bookingAddedByText(b, formatDateTime)})</span>
+                              )}
                             </span>
-                            {b.status === "confirmed" && (
+                            {(b.status === "confirmed" || b.status === "attended") && (
                               <span className="space-x-2">
-                                <button onClick={() => void attended(b.id, s.id)} className="text-sage-600 hover:underline">
-                                  Attended
-                                </button>
+                                {b.status === "confirmed" && (
+                                  <button onClick={() => void attended(b.id, s.id)} className="text-sage-600 hover:underline">
+                                    Attended
+                                  </button>
+                                )}
                                 <button onClick={() => void noShow(b.id, s.id)} className="text-red-500 hover:underline">
                                   No-show
                                 </button>
@@ -1796,7 +1803,10 @@ function MembersTab() {
             <ul className="text-sm space-y-1">
               {detail.bookingHistory.slice(0, 10).map((b) => (
                 <li key={b.id}>
-                  {b.class_name} — {formatDate(b.start_time)} — {b.status}
+                  {b.class_name} — {formatDate(b.start_time)} — {adminBookingStatusLabel(b)}
+                  {bookingAddedByText(b, formatDateTime) && (
+                    <span className="text-xs text-sage-400"> ({bookingAddedByText(b, formatDateTime)})</span>
+                  )}
                 </li>
               ))}
             </ul>
@@ -2598,7 +2608,12 @@ function BookingsTab() {
               <td className="p-2">{b.user_name}</td>
               <td className="p-2">{b.class_name}</td>
               <td className="p-2">{formatDateTime(b.start_time)}</td>
-              <td className="p-2">{b.status}</td>
+              <td className="p-2">
+                {adminBookingStatusLabel(b)}
+                {bookingAddedByText(b, formatDateTime) && (
+                  <div className="text-xs text-sage-400">{bookingAddedByText(b, formatDateTime)}</div>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>

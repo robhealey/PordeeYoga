@@ -54,22 +54,50 @@ export interface SessionRow {
   booked_count: number;
 }
 
-export interface AdminBookingRow {
-  id: number;
+/** Who added a booking by hand, and whether it was after the class started. */
+export interface BookingAddedInfo {
   status: string;
   created_at: string;
+  added_retroactively: number;
+  added_by_name: string | null;
+}
+
+export interface AdminBookingRow extends BookingAddedInfo {
+  id: number;
   user_name: string;
   class_name: string;
   start_time: string;
 }
 
-export interface SessionBookingRow {
+export interface SessionBookingRow extends BookingAddedInfo {
   id: number;
-  status: string;
   user_name: string;
   phone: string | null;
   package_name: string | null;
   credit_refunded: number;
+}
+
+const BOOKING_STATUS_LABELS: Record<string, string> = {
+  confirmed: "Confirmed",
+  attended: "Attended",
+  no_show: "No-show",
+  cancelled_by_member: "Cancelled by member",
+  late_cancelled: "Late cancelled",
+  cancelled_by_studio: "Cancelled by studio",
+};
+
+/** Admin-facing status, e.g. "Attended – Added Retroactively". */
+export function adminBookingStatusLabel(b: BookingAddedInfo): string {
+  const label = BOOKING_STATUS_LABELS[b.status] ?? b.status;
+  return b.added_retroactively ? `${label} – Added Retroactively` : label;
+}
+
+/** "Added by Jane on 12/11/2026, 14:05" for retroactive bookings; null otherwise. */
+export function bookingAddedByText(b: BookingAddedInfo, formatDateTime: (iso: string) => string): string | null {
+  if (!b.added_retroactively) return null;
+  // created_at is SQLite UTC "YYYY-MM-DD HH:MM:SS"
+  const when = formatDateTime(`${b.created_at.replace(" ", "T")}Z`);
+  return b.added_by_name ? `Added by ${b.added_by_name} on ${when}` : `Added on ${when}`;
 }
 
 export interface AdminPaymentRow {
@@ -97,7 +125,7 @@ export interface MemberRow {
 export interface MemberDetail {
   member: MemberRow;
   memberPackages: MemberPackageRow[];
-  bookingHistory: { id: number; status: string; created_at: string; class_name: string; start_time: string }[];
+  bookingHistory: (BookingAddedInfo & { id: number; class_name: string; start_time: string })[];
   birthdayCoupons: { id: number; status: string; issued_at: string; expires_at: string }[];
   renewalHistory: unknown[];
   expiryExtensions: ExpiryExtensionRow[];

@@ -80,7 +80,7 @@ const BOOK_SQL = `
   WHERE NOT EXISTS (
     SELECT 1 FROM bookings WHERE user_id = ? AND class_session_id = ? AND member_package_id = ? AND status = 'confirmed'
   ) AND (
-    SELECT COUNT(*) FROM bookings WHERE class_session_id = ? AND status = 'confirmed'
+    SELECT COUNT(*) FROM bookings WHERE class_session_id = ? AND status IN ('confirmed', 'attended')
   ) < (
     SELECT COALESCE(cs.capacity_override, ct.capacity)
     FROM class_sessions cs JOIN class_types ct ON ct.id = cs.class_type_id
@@ -204,6 +204,7 @@ export async function adminCreateBooking(
     classSessionId: number;
     memberPackageId?: number | null;
     status: "confirmed" | "attended" | "no_show";
+    adminUserId: number;
   }
 ): Promise<BookingResult<{ id: number }>> {
   const session = await getSessionById(env, params.classSessionId);
@@ -242,10 +243,12 @@ export async function adminCreateBooking(
     mpId = mp.id;
   }
 
+  const addedRetroactively = new Date(session.start_time).getTime() <= Date.now() ? 1 : 0;
   const insert = await env.DB.prepare(
-    "INSERT INTO bookings (user_id, class_session_id, member_package_id, credit_value_cents, status) VALUES (?, ?, ?, ?, ?)"
+    `INSERT INTO bookings (user_id, class_session_id, member_package_id, credit_value_cents, status, added_by_user_id, added_retroactively)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
   )
-    .bind(params.userId, params.classSessionId, mpId, creditValueCents, params.status)
+    .bind(params.userId, params.classSessionId, mpId, creditValueCents, params.status, params.adminUserId, addedRetroactively)
     .run();
   const bookingId = insert.meta.last_row_id;
 
@@ -324,7 +327,9 @@ export async function cancelBooking(
 export async function markNoShow(env: Env, bookingId: number): Promise<BookingResult<{ creditRefunded: boolean }>> {
   const booking = await getBookingRow(env, bookingId);
   if (!booking) return { ok: false, status: 404, error: "Booking not found" };
-  if (booking.status !== "confirmed") {
+  // "attended" too: bookings switch to attended automatically once the class ends, so the
+  // admin can still correct one to a no-show afterwards.
+  if (booking.status !== "confirmed" && booking.status !== "attended") {
     return { ok: false, status: 400, error: `Booking is not active (status: ${booking.status})` };
   }
   const session = await getSessionById(env, booking.class_session_id);
@@ -339,6 +344,19 @@ export async function markNoShow(env: Env, bookingId: number): Promise<BookingRe
   if (refund) await refundCredit(env, booking);
 
   return { ok: true, data: { creditRefunded: refund } };
+}
+
+/** Once a class has ended, every booking still "confirmed" becomes "attended" (the admin can
+ * correct individual ones to no-show). Run from the cron. */
+export async function markEndedClassesAttended(env: Env): Promise<number> {
+  const result = await env.DB.prepare(
+    `UPDATE bookings SET status = 'attended'
+     WHERE status = 'confirmed' AND class_session_id IN (
+       SELECT id FROM class_sessions
+       WHERE status != 'cancelled_by_studio' AND datetime(end_time) <= datetime('now')
+     )`
+  ).run();
+  return result.meta.changes ?? 0;
 }
 
 export async function markAttended(env: Env, bookingId: number): Promise<BookingResult> {

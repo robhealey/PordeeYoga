@@ -48,7 +48,7 @@ const BOOK_WITH_COUPON_SQL = `
   WHERE NOT EXISTS (
     SELECT 1 FROM bookings WHERE user_id = ? AND class_session_id = ? AND status = 'confirmed'
   ) AND (
-    SELECT COUNT(*) FROM bookings WHERE class_session_id = ? AND status = 'confirmed'
+    SELECT COUNT(*) FROM bookings WHERE class_session_id = ? AND status IN ('confirmed', 'attended')
   ) < (
     SELECT COALESCE(cs.capacity_override, ct.capacity)
     FROM class_sessions cs JOIN class_types ct ON ct.id = cs.class_type_id

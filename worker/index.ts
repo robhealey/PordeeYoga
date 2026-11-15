@@ -9,6 +9,7 @@ import payments from "./routes/payments.ts";
 import admin from "./routes/admin.ts";
 import webhooks from "./routes/webhooks.ts";
 import { expireStaleNotifications } from "./lib/waitlist.ts";
+import { markEndedClassesAttended } from "./lib/bookings.ts";
 import { getRenewalGraceDays } from "./lib/renewals.ts";
 import { startPackagesPastActivationDeadline } from "./lib/packages.ts";
 import type { Env } from "./env.d.ts";
@@ -73,10 +74,11 @@ export default {
         const startedPackages = await startPackagesPastActivationDeadline(env);
         const expiredPackages = await expirePastDuePackages(env);
         const waitlistExpired = await expireStaleNotifications(env);
+        const attendedBookings = await markEndedClassesAttended(env);
         console.log(
           `cron: expired ${expiredPurchases} pending purchases, started ${startedPackages} packages past activation deadline, ` +
             `expired ${expiredPackages} past-due packages, ` +
-            `${waitlistExpired} stale waitlist claims`
+            `${waitlistExpired} stale waitlist claims, marked ${attendedBookings} bookings attended`
         );
       })()
     );

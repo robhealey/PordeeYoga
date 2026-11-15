@@ -416,7 +416,7 @@ export async function countActiveBookingsForUserOnDate(
   const { results } = await env.DB.prepare(
     `SELECT b.id, cs.start_time
      FROM bookings b JOIN class_sessions cs ON cs.id = b.class_session_id
-     WHERE b.user_id = ? AND b.status = 'confirmed'
+     WHERE b.user_id = ? AND b.status IN ('confirmed', 'attended')
        AND (? IS NULL OR b.member_package_id = ?)
        AND cs.start_time BETWEEN ? AND ?`
   )
