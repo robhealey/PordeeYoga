@@ -1610,6 +1610,7 @@ function MembersTab() {
                     <th className="p-2 font-medium">Status</th>
                     <th className="p-2 font-medium">Credits</th>
                     <th className="p-2 font-medium">Purchased</th>
+                    <th className="p-2 font-medium">Start Date</th>
                     <th className="p-2 font-medium">Expires</th>
                     <th className="p-2 font-medium">Note</th>
                     <th className="p-2" />
@@ -1629,8 +1630,11 @@ function MembersTab() {
                           <td className="p-2">{mp.credits_total != null ? `${mp.credits_total - mp.credits_used}/${mp.credits_total}` : "unlimited"}</td>
                           <td className="p-2 text-sage-500">{formatDate(mp.purchased_at)}</td>
                           <td className="p-2 text-sage-500">
+                            {mp.activated_at ? formatDate(mp.activated_at) : <span className="text-amber-700">Not Started</span>}
+                          </td>
+                          <td className="p-2 text-sage-500">
                             {mp.activation_deadline && !mp.activated_at && mp.status === "active" ? (
-                              <span className="text-amber-700">not started · start by {formatDate(mp.activation_deadline)}</span>
+                              <span className="text-amber-700">start by {formatDate(mp.activation_deadline)}</span>
                             ) : mp.expires_at ? (
                               formatDate(mp.expires_at)
                             ) : (
@@ -1677,7 +1681,7 @@ function MembersTab() {
                           .filter((x) => x.member_package_id === mp.id)
                           .map((x) => (
                             <tr key={`ext-${x.id}`} className="text-xs text-sage-500">
-                              <td colSpan={7} className="px-2 pb-1">
+                              <td colSpan={8} className="px-2 pb-1">
                                 ↳ Extended {x.days != null ? `+${x.days} day${x.days === 1 ? "" : "s"}` : ""} on {formatDate(x.created_at)}
                                 {" "}({formatDate(x.old_expires_at)} → {formatDate(x.new_expires_at)})
                                 {x.admin_name && <> by {x.admin_name}</>}
@@ -1687,7 +1691,7 @@ function MembersTab() {
                           ))}
                         {extendingPkgId === mp.id && mp.expires_at && (
                           <tr className="border-t border-sage-100 bg-sage-50">
-                            <td colSpan={7} className="p-2">
+                            <td colSpan={8} className="p-2">
                               <form
                                 onSubmit={(e) => {
                                   e.preventDefault();
@@ -1737,7 +1741,7 @@ function MembersTab() {
                         )}
                         {editingPkgId === mp.id && (
                           <tr className="border-t border-sage-100 bg-sage-50">
-                            <td colSpan={7} className="p-2">
+                            <td colSpan={8} className="p-2">
                               <form
                                 onSubmit={(e) => {
                                   e.preventDefault();
@@ -1778,7 +1782,7 @@ function MembersTab() {
                     ))}
                   {detail.memberPackages.filter((mp) => showAllPackages || mp.status === "active").length === 0 && (
                     <tr>
-                      <td colSpan={7} className="p-2 text-sage-400">
+                      <td colSpan={8} className="p-2 text-sage-400">
                         No packages{showAllPackages ? "" : " — try “Show all”"}.
                       </td>
                     </tr>

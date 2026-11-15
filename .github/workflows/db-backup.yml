@@ -1,0 +1,45 @@
+# Daily backup of the production D1 database.
+# Exports a full SQL dump and stores it as a GitHub Actions artifact (kept 90 days).
+# Needs repo secrets: CLOUDFLARE_API_TOKEN (Account → D1 → Edit) and CLOUDFLARE_ACCOUNT_ID.
+# Restore: gunzip the file, then
+#   npx wrangler d1 execute <database> --remote --file=backup.sql
+name: Database backup
+
+on:
+  schedule:
+    - cron: "0 20 * * *" # 20:00 UTC = 03:00 Bangkok
+  workflow_dispatch: # allows a manual run from the Actions tab
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Export D1 database
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          STAMP=$(TZ=Asia/Bangkok date +%Y-%m-%d)
+          echo "STAMP=$STAMP" >> "$GITHUB_ENV"
+          npx wrangler d1 export pordee-yoga-db --remote --output "backup-$STAMP.sql"
+          test -s "backup-$STAMP.sql" # fail if the dump is empty
+          gzip "backup-$STAMP.sql"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pordee-yoga-db-${{ env.STAMP }}
+          path: backup-${{ env.STAMP }}.sql.gz
+          retention-days: 90
+          if-no-files-found: error
