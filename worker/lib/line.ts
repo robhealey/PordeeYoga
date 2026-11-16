@@ -95,11 +95,12 @@ export async function verifyLineWebhookSignature(
   return expected === signatureHeader;
 }
 
-/** Push a message to a LINE user (payment confirmations, waitlist spots, studio cancellations). No-ops quietly if Messaging isn't configured yet. */
-export async function pushLineMessage(env: Env, to: string, text: string): Promise<void> {
+/** Push a message to a LINE user (payment confirmations, waitlist spots, studio cancellations).
+ * No-ops quietly if Messaging isn't configured yet. Resolves to whether LINE accepted the message. */
+export async function pushLineMessage(env: Env, to: string, text: string): Promise<boolean> {
   if (!env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN) {
     console.warn("LINE_MESSAGING_CHANNEL_ACCESS_TOKEN not configured; skipping push message");
-    return;
+    return false;
   }
   const res = await fetch("https://api.line.me/v2/bot/message/push", {
     method: "POST",
@@ -111,7 +112,27 @@ export async function pushLineMessage(env: Env, to: string, text: string): Promi
   });
   if (!res.ok) {
     console.error(`LINE push message failed: ${res.status} ${await res.text()}`);
+    return false;
   }
+  return true;
+}
+
+/** This month's LINE message allowance and usage. `limit` is null on plans with no cap. */
+export async function getLineMessageQuota(env: Env): Promise<{ limit: number | null; used: number } | null> {
+  const token = env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;
+  if (!token) return null;
+  const headers = { Authorization: `Bearer ${token}` };
+  const [quotaRes, usageRes] = await Promise.all([
+    fetch("https://api.line.me/v2/bot/message/quota", { headers }),
+    fetch("https://api.line.me/v2/bot/message/quota/consumption", { headers }),
+  ]);
+  if (!quotaRes.ok || !usageRes.ok) {
+    console.error(`LINE quota lookup failed: ${quotaRes.status} / ${usageRes.status}`);
+    return null;
+  }
+  const quota = (await quotaRes.json()) as { type: "none" | "limited"; value?: number };
+  const usage = (await usageRes.json()) as { totalUsage: number };
+  return { limit: quota.type === "limited" ? quota.value ?? null : null, used: usage.totalUsage };
 }
 
 /** Pushes a message to every studio owner (see OWNER_LINE_USER_IDS) — used to flag things

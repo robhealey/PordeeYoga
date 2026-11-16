@@ -220,6 +220,7 @@ export interface WaitlistRow {
 }
 
 export const adminApi = {
+  lineQuota: () => request<{ quota: { limit: number | null; used: number } | null }>("/line-quota"),
   listClassTypes: () => request<{ classTypes: ClassTypeRow[] }>("/class-types"),
   createClassType: (body: {
     name: string;

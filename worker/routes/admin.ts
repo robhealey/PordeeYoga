@@ -32,7 +32,7 @@ import {
   removeSharedCouponMember,
 } from "../lib/coupons.ts";
 import { listWaitlistForSession } from "../lib/waitlist.ts";
-import { pushLineMessage } from "../lib/line.ts";
+import { getLineMessageQuota, pushLineMessage } from "../lib/line.ts";
 import { formatDateForMessage } from "../lib/dateFormat.ts";
 import { CLASS_LEVELS, type ClassLevel } from "../lib/db.ts";
 
@@ -41,6 +41,11 @@ const admin = new Hono<AppEnv>();
 const isPositiveInt = (v: unknown): boolean => Number.isInteger(v) && (v as number) >= 1;
 
 admin.use("*", attachUser, requireAdmin);
+
+/** LINE messages used / allowed this month, for the counter in the admin header. */
+admin.get("/line-quota", async (c) => {
+  return c.json({ quota: await getLineMessageQuota(c.env) });
+});
 
 // -- Class types (section 3) ---------------------------------------------------
 

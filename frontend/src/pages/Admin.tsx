@@ -56,12 +56,34 @@ const TABS: Tab[] = [
   "payments",
 ];
 
+/** "LINE: 290 / 300 messages left this month", inline beside the page title. */
+function LineQuotaNote() {
+  const [quota, setQuota] = useState<{ limit: number | null; used: number } | null>(null);
+  useEffect(() => {
+    adminApi.lineQuota().then((r) => setQuota(r.quota)).catch(() => {});
+  }, []);
+  if (!quota) return null;
+  if (quota.limit == null) {
+    return <span className="text-xs text-gray-500">LINE: {quota.used} messages sent this month</span>;
+  }
+  const left = Math.max(0, quota.limit - quota.used);
+  const low = left <= quota.limit * 0.2;
+  return (
+    <span className={`text-xs ${low ? "text-red-600 font-medium" : "text-gray-500"}`}>
+      LINE: {left} / {quota.limit} messages left this month
+    </span>
+  );
+}
+
 export function Admin() {
   const [tab, setTab] = useState<Tab>("sessions");
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold mb-4">Studio Admin</h1>
+      <div className="flex items-baseline gap-3 flex-wrap mb-4">
+        <h1 className="text-2xl font-semibold">Studio Admin</h1>
+        <LineQuotaNote />
+      </div>
       <div className="flex gap-2 mb-4 flex-wrap">
         {TABS.map((t) => (
           <button

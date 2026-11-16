@@ -12,6 +12,7 @@ import { expireStaleNotifications } from "./lib/waitlist.ts";
 import { markEndedClassesAttended } from "./lib/bookings.ts";
 import { getRenewalGraceDays } from "./lib/renewals.ts";
 import { startPackagesPastActivationDeadline } from "./lib/packages.ts";
+import { sendPackageExpiryReminders } from "./lib/expiryReminders.ts";
 import type { Env } from "./env.d.ts";
 
 const app = new Hono<AppEnv>();
@@ -75,10 +76,12 @@ export default {
         const expiredPackages = await expirePastDuePackages(env);
         const waitlistExpired = await expireStaleNotifications(env);
         const attendedBookings = await markEndedClassesAttended(env);
+        const expiryReminders = await sendPackageExpiryReminders(env);
         console.log(
           `cron: expired ${expiredPurchases} pending purchases, started ${startedPackages} packages past activation deadline, ` +
             `expired ${expiredPackages} past-due packages, ` +
-            `${waitlistExpired} stale waitlist claims, marked ${attendedBookings} bookings attended`
+            `${waitlistExpired} stale waitlist claims, marked ${attendedBookings} bookings attended, ` +
+            `sent ${expiryReminders} package expiry reminders`
         );
       })()
     );
